@@ -5,16 +5,27 @@ from typing import Iterable
 
 from village_rp_engine.core.tick_engine import TickEngine
 from village_rp_engine.core.world_state import WorldState
-from village_rp_engine.domain.settlement_data import build_phase2_settlements, get_phase2_npc_name_map
+from village_rp_engine.domain.settlement_data import (
+    build_phase2_settlements,
+    build_phase3_region_states,
+    build_phase3_regions,
+    build_phase4_continent,
+    build_phase4_continent_states,
+    get_phase2_npc_name_map,
+)
 from village_rp_engine.logs.chronicle import build_chronicle_entries, build_world_chronicle_entries
 from village_rp_engine.logs.world_log import build_tick_header, format_relationship
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import (
+    ContinentDefinition,
+    ContinentRuntimeState,
     InfluencePacket,
     PresentationDialogue,
     PresentationEventSummary,
     PresentationNPC,
     PresentationState,
+    RegionDefinition,
+    RegionRuntimeState,
     SettlementDefinition,
     SettlementLink,
     SimulationDepth,
@@ -83,6 +94,173 @@ def apply_pending_influences(
     return tuple(remaining_influences)
 
 
+def produce_continent_influences(snapshot: WorldSnapshot) -> dict[str, dict[str, int]]:
+    influences: dict[str, dict[str, int]] = {}
+    for continent_id, continent_state in snapshot.continent_states.items():
+        continent_definition = snapshot.continent_definitions.get(continent_id)
+        if continent_definition is None:
+            continue
+        for region_id in continent_definition.region_ids:
+            influences[region_id] = {
+                'security_risk_delta': 1 if continent_state.global_tension >= 2 else 0,
+                'trade_flow_delta': -1 if continent_state.trade_pressure >= 2 else 0,
+                'rumor_density_delta': 1 if continent_state.rumor_noise >= 2 else 0,
+                'stress_modifier_delta': 1 if continent_state.migration_pressure >= 1 else 0,
+            }
+    return influences
+
+
+def refresh_continent_states(
+    continent_definitions: dict[str, ContinentDefinition],
+    continent_states: dict[str, ContinentRuntimeState],
+    region_states: dict[str, RegionRuntimeState],
+) -> dict[str, ContinentRuntimeState]:
+    refreshed: dict[str, ContinentRuntimeState] = {}
+    for continent_id, continent_definition in continent_definitions.items():
+        base_state = continent_states.get(
+            continent_id,
+            ContinentRuntimeState(
+                continent_id=continent_definition.continent_id,
+                global_tension=continent_definition.global_tension,
+                trade_pressure=continent_definition.trade_pressure,
+                migration_pressure=continent_definition.migration_pressure,
+                rumor_noise=continent_definition.rumor_noise,
+                stability=continent_definition.stability,
+            ),
+        )
+        member_regions = [
+            region_states[region_id]
+            for region_id in continent_definition.region_ids
+            if region_id in region_states
+        ]
+        avg_security_risk = int(sum(region.security_risk for region in member_regions) / len(member_regions)) if member_regions else 0
+        avg_trade_flow = int(sum(region.trade_flow for region in member_regions) / len(member_regions)) if member_regions else 0
+        avg_rumor_density = int(sum(region.rumor_density for region in member_regions) / len(member_regions)) if member_regions else 0
+        avg_stress_modifier = int(sum(region.stress_modifier for region in member_regions) / len(member_regions)) if member_regions else 0
+        refreshed[continent_id] = ContinentRuntimeState(
+            continent_id=continent_id,
+            global_tension=max(
+                continent_definition.global_tension,
+                base_state.global_tension
+                + (1 if avg_security_risk >= 2 else -1 if avg_security_risk == 0 and base_state.global_tension > continent_definition.global_tension else 0),
+            ),
+            trade_pressure=max(
+                continent_definition.trade_pressure,
+                base_state.trade_pressure
+                + (1 if avg_trade_flow <= 1 else -1 if avg_trade_flow >= 3 and base_state.trade_pressure > continent_definition.trade_pressure else 0),
+            ),
+            migration_pressure=max(
+                continent_definition.migration_pressure,
+                base_state.migration_pressure
+                + (1 if avg_stress_modifier >= 2 else -1 if avg_stress_modifier == 0 and base_state.migration_pressure > continent_definition.migration_pressure else 0),
+            ),
+            rumor_noise=max(
+                continent_definition.rumor_noise,
+                base_state.rumor_noise
+                + (1 if avg_rumor_density >= 2 else -1 if avg_rumor_density == 0 and base_state.rumor_noise > continent_definition.rumor_noise else 0),
+            ),
+            stability=max(
+                0,
+                base_state.stability
+                + (1 if avg_security_risk == 0 and avg_stress_modifier == 0 else 0)
+                - (1 if avg_security_risk >= 2 or avg_stress_modifier >= 2 else 0),
+            ),
+        )
+    return refreshed
+
+
+def refresh_region_states(
+    region_definitions: dict[str, RegionDefinition],
+    region_states: dict[str, RegionRuntimeState],
+    settlement_states: dict[str, WorldState],
+    continent_influences: dict[str, dict[str, int]] | None = None,
+) -> dict[str, RegionRuntimeState]:
+    refreshed: dict[str, RegionRuntimeState] = {}
+    for region_id, region_definition in region_definitions.items():
+        base_state = region_states.get(
+            region_id,
+            RegionRuntimeState(
+                region_id=region_definition.region_id,
+                security_risk=region_definition.security_risk,
+                trade_flow=region_definition.trade_flow,
+                rumor_density=region_definition.rumor_density,
+                stress_modifier=region_definition.stress_modifier,
+                economy_modifier=dict(region_definition.economy_modifier),
+            ),
+        )
+        influence = (continent_influences or {}).get(region_id, {})
+        member_states = [
+            settlement_states[settlement_id]
+            for settlement_id in region_definition.settlement_ids
+            if settlement_id in settlement_states
+        ]
+        remote_rumors = sum(
+            1
+            for settlement_state in member_states
+            for rumor in settlement_state.rumor_log[-3:]
+            if rumor.is_remote
+        )
+        avg_stress = int(sum(settlement_state.stress for settlement_state in member_states) / len(member_states)) if member_states else 0
+        refreshed[region_id] = RegionRuntimeState(
+            region_id=region_id,
+            security_risk=max(
+                region_definition.security_risk,
+                base_state.security_risk
+                + influence.get('security_risk_delta', 0)
+                + (1 if avg_stress >= 24 else -1 if avg_stress < 18 and base_state.security_risk > region_definition.security_risk else 0),
+            ),
+            trade_flow=max(
+                0,
+                base_state.trade_flow
+                + influence.get('trade_flow_delta', 0)
+                + (1 if avg_stress < 20 and base_state.trade_flow < region_definition.trade_flow else 0),
+            ),
+            rumor_density=max(
+                region_definition.rumor_density,
+                base_state.rumor_density
+                + influence.get('rumor_density_delta', 0)
+                + (1 if remote_rumors > 0 else -1 if remote_rumors == 0 and base_state.rumor_density > region_definition.rumor_density else 0),
+            ),
+            stress_modifier=max(
+                region_definition.stress_modifier,
+                base_state.stress_modifier
+                + influence.get('stress_modifier_delta', 0)
+                + (1 if avg_stress >= 28 else -1 if avg_stress < 20 and base_state.stress_modifier > region_definition.stress_modifier else 0),
+            ),
+            economy_modifier=dict(region_definition.economy_modifier),
+        )
+    return refreshed
+
+
+def produce_region_influences(snapshot: WorldSnapshot) -> tuple[InfluencePacket, ...]:
+    packets: list[InfluencePacket] = []
+    for region_id, region_state in snapshot.region_states.items():
+        region_definition = snapshot.region_definitions.get(region_id)
+        if region_definition is None:
+            continue
+        for settlement_id in region_definition.settlement_ids:
+            settlement_definition = snapshot.settlement_definitions.get(settlement_id)
+            if settlement_definition is None:
+                continue
+            economy_delta: dict[str, int | float] = {}
+            for key, delta in region_state.economy_modifier.items():
+                if key in settlement_definition.economy_profile.values:
+                    economy_delta[key] = delta
+            security_delta = -1 if region_state.security_risk >= 2 else 0
+            stress_delta = region_state.stress_modifier + (1 if region_state.rumor_density >= 3 else 0)
+            packets.append(
+                InfluencePacket(
+                    source_layer=f'region:{region_id}',
+                    target_settlement_id=settlement_id,
+                    economy_delta=economy_delta,
+                    security_delta=security_delta,
+                    stress_delta=stress_delta,
+                    rumor_tags=(f'region:{region_id}',),
+                )
+            )
+    return tuple(packets)
+
+
 def build_presentation_state(
     settlement_state: WorldState,
     chronicle_entries=None,
@@ -145,6 +323,10 @@ def build_world_snapshot(
     recently_visited_ids: Iterable[str] = (),
     settlement_links: Iterable[SettlementLink] = (),
     propagated_rumor_keys: Iterable[str] = (),
+    region_definitions: dict[str, RegionDefinition] | None = None,
+    region_states: dict[str, RegionRuntimeState] | None = None,
+    continent_definitions: dict[str, ContinentDefinition] | None = None,
+    continent_states: dict[str, ContinentRuntimeState] | None = None,
 ) -> WorldSnapshot:
     single_settlement_mode = settlement_states is None and settlement_state is not None
     if settlement_states is None:
@@ -160,13 +342,27 @@ def build_world_snapshot(
         active_settlement_id = active_settlement_id or settlement_state.settlement_id
     if settlement_definitions is None:
         settlement_definitions = {}
+    if region_definitions is None:
+        region_definitions = build_phase3_regions()
+    if region_states is None:
+        region_states = build_phase3_region_states()
+    if continent_definitions is None:
+        continent = build_phase4_continent()
+        continent_definitions = {continent.continent_id: continent}
+    if continent_states is None:
+        continent_states = build_phase4_continent_states()
     if active_settlement_id is None:
         active_settlement_id = next(iter(settlement_states))
     if single_settlement_mode:
         chronicle_entries = build_chronicle_entries(settlement_states[active_settlement_id])
         settlement_links = ()
     else:
-        chronicle_entries = build_world_chronicle_entries(settlement_states, active_settlement_id=active_settlement_id)
+        chronicle_entries = build_world_chronicle_entries(
+            settlement_states,
+            active_settlement_id=active_settlement_id,
+            region_states=region_states,
+            continent_states=continent_states,
+        )
     return WorldSnapshot(
         settlement_definitions=dict(settlement_definitions),
         settlement_states={settlement_id: clone_settlement_state(state) for settlement_id, state in settlement_states.items()},
@@ -177,6 +373,10 @@ def build_world_snapshot(
         pending_influences=tuple(pending_influences),
         settlement_links=tuple(settlement_links),
         propagated_rumor_keys=tuple(propagated_rumor_keys),
+        region_definitions=dict(region_definitions),
+        region_states=dict(region_states),
+        continent_definitions=dict(continent_definitions),
+        continent_states=dict(continent_states),
     )
 
 
@@ -186,10 +386,14 @@ class Phase1WorldEngine:
         settlement_definitions: dict[str, SettlementDefinition],
         settlement_engines: dict[str, TickEngine],
         settlement_links: Iterable[SettlementLink] = (),
+        region_definitions: dict[str, RegionDefinition] | None = None,
+        continent_definitions: dict[str, ContinentDefinition] | None = None,
     ) -> None:
         self.settlement_definitions = dict(settlement_definitions)
         self.settlement_engines = dict(settlement_engines)
         self.settlement_links = tuple(settlement_links)
+        self.region_definitions = dict(region_definitions or {})
+        self.continent_definitions = dict(continent_definitions or {})
 
     @property
     def settlement_engine(self) -> TickEngine:
@@ -212,6 +416,26 @@ class Phase1WorldEngine:
             for settlement_id, state in snapshot.settlement_states.items()
         }
         active_links = snapshot.settlement_links or self.settlement_links
+        resolved_settlement_definitions = snapshot.settlement_definitions or self.settlement_definitions
+        region_definitions = snapshot.region_definitions or self.region_definitions or build_phase3_regions()
+        region_states_input = snapshot.region_states or build_phase3_region_states()
+        continent_definitions = snapshot.continent_definitions or self.continent_definitions or {build_phase4_continent().continent_id: build_phase4_continent()}
+        continent_states_input = snapshot.continent_states or build_phase4_continent_states()
+        continent_states = refresh_continent_states(continent_definitions, continent_states_input, region_states_input)
+        resolved_snapshot = build_world_snapshot(
+            settlement_definitions=resolved_settlement_definitions,
+            settlement_states=states,
+            active_settlement_id=snapshot.active_settlement_id,
+            recently_visited_ids=snapshot.recently_visited_ids,
+            settlement_links=active_links,
+            propagated_rumor_keys=snapshot.propagated_rumor_keys,
+            region_definitions=region_definitions,
+            region_states=region_states_input,
+            continent_definitions=continent_definitions,
+            continent_states=continent_states,
+        )
+        continent_influences = produce_continent_influences(resolved_snapshot)
+        region_states = refresh_region_states(region_definitions, region_states_input, states, continent_influences)
         active_state = states[snapshot.active_settlement_id]
         travel_target = target_settlement_id
         if action.action_type == 'travel' and action.target_settlement_id:
@@ -247,7 +471,12 @@ class Phase1WorldEngine:
             active_state = states[snapshot.active_settlement_id]
             active_state = self._run_active_step(self.get_settlement_engine(snapshot.active_settlement_id), active_state, mode, action)
             states[snapshot.active_settlement_id] = active_state
-            chronicle_entries = build_world_chronicle_entries(states, active_settlement_id=snapshot.active_settlement_id)
+            chronicle_entries = build_world_chronicle_entries(
+                states,
+                active_settlement_id=snapshot.active_settlement_id,
+                region_states=region_states,
+                continent_states=continent_states,
+            )
             return WorldSnapshot(
                 settlement_definitions=dict(self.settlement_definitions),
                 settlement_states=states,
@@ -258,9 +487,25 @@ class Phase1WorldEngine:
                 pending_influences=tuple(snapshot.pending_influences),
                 settlement_links=active_links,
                 propagated_rumor_keys=tuple(snapshot.propagated_rumor_keys),
+                region_definitions=region_definitions,
+                region_states=region_states,
+                continent_definitions=continent_definitions,
+                continent_states=continent_states,
             )
 
-        remaining_influences = tuple(snapshot.pending_influences)
+        region_snapshot = build_world_snapshot(
+            settlement_definitions=resolved_settlement_definitions,
+            settlement_states=states,
+            active_settlement_id=next_active_settlement_id,
+            recently_visited_ids=recently_visited_ids or next_recently_visited_ids,
+            settlement_links=active_links,
+            propagated_rumor_keys=snapshot.propagated_rumor_keys,
+            region_definitions=region_definitions,
+            region_states=region_states,
+            continent_definitions=continent_definitions,
+            continent_states=continent_states,
+        )
+        remaining_influences = tuple(snapshot.pending_influences) + produce_region_influences(region_snapshot)
         depth_map: dict[str, SimulationDepth] = {}
         for settlement_id, state in states.items():
             depth = resolve_simulation_depth(
@@ -280,13 +525,20 @@ class Phase1WorldEngine:
             else:
                 states[settlement_id] = self._run_unvisited_step(self.get_settlement_engine(settlement_id), state)
 
+        region_states = refresh_region_states(region_definitions, region_states, states, continent_influences)
+        continent_states = refresh_continent_states(continent_definitions, continent_states, region_states)
         propagated_rumor_keys, states = self._propagate_rumors(
             states,
             snapshot.propagated_rumor_keys,
             active_links,
         )
         active_state = states[next_active_settlement_id]
-        chronicle_entries = build_world_chronicle_entries(states, active_settlement_id=next_active_settlement_id)
+        chronicle_entries = build_world_chronicle_entries(
+            states,
+            active_settlement_id=next_active_settlement_id,
+            region_states=region_states,
+            continent_states=continent_states,
+        )
         return WorldSnapshot(
             settlement_definitions=dict(self.settlement_definitions),
             settlement_states=states,
@@ -297,6 +549,10 @@ class Phase1WorldEngine:
             pending_influences=remaining_influences,
             settlement_links=active_links,
             propagated_rumor_keys=tuple(sorted(propagated_rumor_keys)),
+            region_definitions=region_definitions,
+            region_states=region_states,
+            continent_definitions=continent_definitions,
+            continent_states=continent_states,
         )
 
     def _run_active_step(self, settlement_engine: TickEngine, settlement_state: WorldState, mode: Mode, action: PlayerAction | None) -> WorldState:

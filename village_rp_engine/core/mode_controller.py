@@ -12,6 +12,10 @@ from village_rp_engine.domain.settlement_data import (
     build_phase1_settlement,
     build_phase2_settlement_links,
     build_phase2_settlements,
+    build_phase3_region_states,
+    build_phase3_regions,
+    build_phase4_continent,
+    build_phase4_continent_states,
 )
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import SettlementDefinition, WorldSnapshot
@@ -46,6 +50,8 @@ def build_world_engine() -> Phase1WorldEngine:
         settlement_definitions=settlements,
         settlement_engines=settlement_engines,
         settlement_links=build_phase2_settlement_links(),
+        region_definitions=build_phase3_regions(),
+        continent_definitions={build_phase4_continent().continent_id: build_phase4_continent()},
     )
 
 
@@ -84,12 +90,17 @@ def create_default_world_snapshot() -> WorldSnapshot:
         )
         for settlement_id, settlement in settlements.items()
     }
+    continent = build_phase4_continent()
     return build_world_snapshot(
         settlement_definitions=settlements,
         settlement_states=states,
         active_settlement_id='village_1',
         recently_visited_ids=(),
         settlement_links=build_phase2_settlement_links(),
+        region_definitions=build_phase3_regions(),
+        region_states=build_phase3_region_states(),
+        continent_definitions={continent.continent_id: continent},
+        continent_states=build_phase4_continent_states(),
     )
 
 

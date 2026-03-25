@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from village_rp_engine.core.world_state import WorldState
-from village_rp_engine.models.phase1_world import ChronicleEntry
+from village_rp_engine.models.phase1_world import ChronicleEntry, ContinentRuntimeState, RegionRuntimeState
 
 
 def build_chronicle_entries(settlement_state: WorldState) -> list[ChronicleEntry]:
@@ -44,9 +44,63 @@ def build_chronicle_entries(settlement_state: WorldState) -> list[ChronicleEntry
     return entries
 
 
+def build_region_chronicle_entries(
+    region_states: dict[str, RegionRuntimeState],
+    day: int,
+    tick: int,
+) -> list[ChronicleEntry]:
+    entries: list[ChronicleEntry] = []
+    for region_id, region_state in sorted(region_states.items()):
+        if region_state.security_risk >= 2:
+            text = f'{region_id}: security tension rising'
+        elif region_state.rumor_density >= 2:
+            text = f'{region_id}: rumor traffic increased'
+        else:
+            text = f'{region_id}: regional pressure steady'
+        entries.append(
+            ChronicleEntry(
+                entry_type='region_summary',
+                source_id=region_id,
+                day=day,
+                tick=tick,
+                text=text,
+                settlement_id=None,
+            )
+        )
+    return entries
+
+
+def build_continent_chronicle_entries(
+    continent_states: dict[str, ContinentRuntimeState],
+    day: int,
+    tick: int,
+) -> list[ChronicleEntry]:
+    entries: list[ChronicleEntry] = []
+    for continent_id, continent_state in sorted(continent_states.items()):
+        if continent_state.global_tension >= 2:
+            text = f'{continent_id}: rising global tension'
+        elif continent_state.trade_pressure >= 2:
+            text = f'{continent_id}: trade pressure increasing'
+        else:
+            text = f'{continent_id}: continental pressure steady'
+        entries.append(
+            ChronicleEntry(
+                entry_type='continent_summary',
+                source_id=continent_id,
+                day=day,
+                tick=tick,
+                text=text,
+                settlement_id=None,
+            )
+        )
+    return entries
+
+
 def build_world_chronicle_entries(
     settlement_states: dict[str, WorldState],
     active_settlement_id: str | None = None,
+    region_states: dict[str, RegionRuntimeState] | None = None,
+    continent_states: dict[str, ContinentRuntimeState] | None = None,
 ) -> list[ChronicleEntry]:
     entries: list[ChronicleEntry] = []
     ordered_ids = sorted(settlement_states)
@@ -84,4 +138,15 @@ def build_world_chronicle_entries(
                 settlement_id=settlement_id,
             )
         )
-    return entries[-6:]
+    if active_settlement_id in settlement_states:
+        summary_day = settlement_states[active_settlement_id].day
+        summary_tick = settlement_states[active_settlement_id].tick
+    else:
+        anchor_state = settlement_states[ordered_ids[0]]
+        summary_day = anchor_state.day
+        summary_tick = anchor_state.tick
+    if region_states:
+        entries.extend(build_region_chronicle_entries(region_states, summary_day, summary_tick))
+    if continent_states:
+        entries.extend(build_continent_chronicle_entries(continent_states, summary_day, summary_tick))
+    return entries[-10:]

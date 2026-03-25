@@ -63,6 +63,22 @@ def test_world_state_initializes_from_settlement_definition(monkeypatch) -> None
     assert state.economy_profile == {'grain': 12, 'iron': 3}
 
 
+def test_compatibility_snapshot_includes_region_registry() -> None:
+    snapshot = build_world_snapshot(create_default_state())
+
+    assert snapshot.region_definitions
+    assert snapshot.region_states
+    assert 'north_fields' in snapshot.region_definitions
+
+
+def test_compatibility_snapshot_includes_continent_registry() -> None:
+    snapshot = build_world_snapshot(create_default_state())
+
+    assert snapshot.continent_definitions
+    assert snapshot.continent_states
+    assert 'continent_1' in snapshot.continent_definitions
+
+
 def test_single_settlement_defaults_to_depth_active() -> None:
     snapshot = create_default_world_snapshot()
 
@@ -177,3 +193,15 @@ def test_chronicle_entries_are_built_from_settlement_state() -> None:
 
     assert snapshot.presentation_state.chronicle_entries
     assert any(entry.entry_type == 'event' for entry in snapshot.presentation_state.chronicle_entries)
+
+
+def test_continent_fallback_applies_to_actual_influence_chain() -> None:
+    world = build_world_engine()
+    snapshot = build_world_snapshot(create_default_state())
+    before_region = snapshot.region_states['north_fields']
+
+    next_snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.wait())
+    after_region = next_snapshot.region_states['north_fields']
+
+    assert next_snapshot.continent_states
+    assert after_region.security_risk > before_region.security_risk

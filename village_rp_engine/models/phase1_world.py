@@ -40,6 +40,7 @@ class InfluencePacket:
 @dataclass(frozen=True)
 class SettlementDefinition:
     settlement_id: str
+    region_id: str
     npc_ids: tuple[str, ...]
     locations: tuple[str, ...]
     schedules: dict[str, dict[str, str]]
@@ -56,6 +57,51 @@ class SettlementRuntimeState:
     security: int
     stress: int
     economy_profile: dict[str, int | float]
+
+
+@dataclass(frozen=True)
+class RegionDefinition:
+    region_id: str
+    continent_id: str
+    name: str
+    settlement_ids: tuple[str, ...]
+    security_risk: int
+    trade_flow: int
+    rumor_density: int
+    stress_modifier: int
+    economy_modifier: dict[str, int | float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RegionRuntimeState:
+    region_id: str
+    security_risk: int
+    trade_flow: int
+    rumor_density: int
+    stress_modifier: int
+    economy_modifier: dict[str, int | float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ContinentDefinition:
+    continent_id: str
+    name: str
+    region_ids: tuple[str, ...]
+    global_tension: int
+    trade_pressure: int
+    migration_pressure: int
+    rumor_noise: int
+    stability: int
+
+
+@dataclass(frozen=True)
+class ContinentRuntimeState:
+    continent_id: str
+    global_tension: int
+    trade_pressure: int
+    migration_pressure: int
+    rumor_noise: int
+    stability: int
 
 
 @dataclass(frozen=True)
@@ -123,6 +169,10 @@ class WorldSnapshot:
     pending_influences: tuple[InfluencePacket, ...] = ()
     settlement_links: tuple[SettlementLink, ...] = ()
     propagated_rumor_keys: tuple[str, ...] = ()
+    region_definitions: dict[str, RegionDefinition] = field(default_factory=dict)
+    region_states: dict[str, RegionRuntimeState] = field(default_factory=dict)
+    continent_definitions: dict[str, ContinentDefinition] = field(default_factory=dict)
+    continent_states: dict[str, ContinentRuntimeState] = field(default_factory=dict)
 
     @property
     def settlement_state(self) -> WorldState:
@@ -131,6 +181,11 @@ class WorldSnapshot:
     @property
     def settlement_definition(self) -> SettlementDefinition:
         return self.settlement_definitions[self.active_settlement_id]
+
+    @property
+    def region_definition(self) -> RegionDefinition | None:
+        settlement = self.settlement_definition
+        return self.region_definitions.get(settlement.region_id)
 
 
 SettlementState = WorldState

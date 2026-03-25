@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from village_rp_engine.domain.settlement_data import build_phase1_settlement, build_phase2_settlement_links, build_phase2_settlements
+from village_rp_engine.domain.settlement_data import (
+    build_phase1_settlement,
+    build_phase2_settlement_links,
+    build_phase2_settlements,
+    build_phase3_region_states,
+    build_phase3_regions,
+)
 
 
 def test_settlement_definition_wraps_existing_seed_data() -> None:
     settlement = build_phase1_settlement()
 
     assert settlement.settlement_id == 'village_1'
+    assert settlement.region_id == 'north_fields'
     assert 'farmer' in settlement.npc_ids
     assert '광장' in settlement.locations
     assert 'farmer' in settlement.schedules
@@ -30,3 +37,16 @@ def test_phase2_settlement_links_exist_for_travel_and_rumor_flow() -> None:
 
     assert any(link.from_settlement_id == 'village_1' and link.to_settlement_id == 'village_2' for link in links)
     assert any(link.from_settlement_id == 'town_1' and link.to_settlement_id == 'village_2' for link in links)
+
+
+def test_phase3_region_registry_is_seed_consistent() -> None:
+    settlements = build_phase2_settlements()
+    regions = build_phase3_regions()
+    region_states = build_phase3_region_states()
+
+    assert {'north_fields', 'river_trade'} == set(regions)
+    assert set(region_states) == set(regions)
+    assert settlements['village_1'].region_id == 'north_fields'
+    assert settlements['village_2'].region_id == 'north_fields'
+    assert settlements['town_1'].region_id == 'river_trade'
+    assert set(regions['north_fields'].settlement_ids) == {'village_1', 'village_2'}

@@ -7,7 +7,16 @@ from village_rp_engine.domain.location_data import build_locations
 from village_rp_engine.domain.npc_data import build_npcs
 from village_rp_engine.domain.schedule_data import build_schedules
 from village_rp_engine.models.npc import NPC
-from village_rp_engine.models.phase1_world import EconomyProfile, SecurityState, SettlementDefinition, SettlementLink
+from village_rp_engine.models.phase1_world import (
+    ContinentDefinition,
+    ContinentRuntimeState,
+    EconomyProfile,
+    RegionDefinition,
+    RegionRuntimeState,
+    SecurityState,
+    SettlementDefinition,
+    SettlementLink,
+)
 
 
 PHASE1_SETTLEMENT_ID = 'village_1'
@@ -20,6 +29,7 @@ def build_phase1_settlement() -> SettlementDefinition:
     npcs = build_npcs()
     return SettlementDefinition(
         settlement_id=PHASE1_SETTLEMENT_ID,
+        region_id='north_fields',
         npc_ids=tuple(npc.npc_id for npc in npcs),
         locations=tuple(build_locations()),
         schedules=build_schedules(),
@@ -75,6 +85,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
         base.settlement_id: base,
         'village_2': SettlementDefinition(
             settlement_id='village_2',
+            region_id='north_fields',
             npc_ids=('farmer', 'innkeeper', 'village_elder', 'guard_captain'),
             locations=('광장', '술집', '창고', '집'),
             schedules=village_2_schedules,
@@ -86,6 +97,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
         ),
         'town_1': SettlementDefinition(
             settlement_id='town_1',
+            region_id='river_trade',
             npc_ids=('blacksmith', 'innkeeper', 'village_elder', 'guard_captain'),
             locations=('광장', '대장간', '술집', '시장', '집'),
             schedules=town_1_schedules,
@@ -107,6 +119,74 @@ def build_phase2_settlement_links() -> tuple[SettlementLink, ...]:
         SettlementLink('village_1', 'town_1', 'road', 3, 2, 3),
         SettlementLink('town_1', 'village_1', 'road', 3, 2, 3),
     )
+
+
+def build_phase3_regions() -> dict[str, RegionDefinition]:
+    return {
+        'north_fields': RegionDefinition(
+            region_id='north_fields',
+            continent_id='continent_1',
+            name='North Fields',
+            settlement_ids=('village_1', 'village_2'),
+            security_risk=1,
+            trade_flow=1,
+            rumor_density=1,
+            stress_modifier=1,
+            economy_modifier={'grain': 2},
+        ),
+        'river_trade': RegionDefinition(
+            region_id='river_trade',
+            continent_id='continent_1',
+            name='River Trade',
+            settlement_ids=('town_1',),
+            security_risk=0,
+            trade_flow=3,
+            rumor_density=2,
+            stress_modifier=0,
+            economy_modifier={'trade': 2, 'iron': 1},
+        ),
+    }
+
+
+def build_phase3_region_states() -> dict[str, RegionRuntimeState]:
+    return {
+        region_id: RegionRuntimeState(
+            region_id=region.region_id,
+            security_risk=region.security_risk,
+            trade_flow=region.trade_flow,
+            rumor_density=region.rumor_density,
+            stress_modifier=region.stress_modifier,
+            economy_modifier=dict(region.economy_modifier),
+        )
+        for region_id, region in build_phase3_regions().items()
+    }
+
+
+def build_phase4_continent() -> ContinentDefinition:
+    return ContinentDefinition(
+        continent_id='continent_1',
+        name='Continental Belt',
+        region_ids=('north_fields', 'river_trade'),
+        global_tension=2,
+        trade_pressure=2,
+        migration_pressure=1,
+        rumor_noise=2,
+        stability=4,
+    )
+
+
+def build_phase4_continent_states() -> dict[str, ContinentRuntimeState]:
+    continent = build_phase4_continent()
+    return {
+        continent.continent_id: ContinentRuntimeState(
+            continent_id=continent.continent_id,
+            global_tension=continent.global_tension,
+            trade_pressure=continent.trade_pressure,
+            migration_pressure=continent.migration_pressure,
+            rumor_noise=continent.rumor_noise,
+            stability=continent.stability,
+        )
+    }
 
 
 def build_npcs_for_settlement(settlement: SettlementDefinition) -> list[NPC]:
