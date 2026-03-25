@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Iterable
+from dataclasses import asdict, replace
+from datetime import datetime
+import json
+from pathlib import Path
+from typing import Any, Iterable
 
+from village_rp_engine.config import DEFAULT_PLAYER_LOCATION
 from village_rp_engine.core.tick_engine import TickEngine
 from village_rp_engine.core.world_state import WorldState
 from village_rp_engine.domain.settlement_data import (
@@ -22,9 +26,11 @@ from village_rp_engine.logs.world_log import build_tick_header, format_relations
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import (
     ChronicleArchive,
+    ChronicleEntry,
     ContinentDefinition,
     ContinentRuntimeState,
     InfluencePacket,
+    InteractionRuntimeState,
     PresentationDialogue,
     PresentationEventSummary,
     PresentationNPC,
@@ -34,15 +40,105 @@ from village_rp_engine.models.phase1_world import (
     SettlementDefinition,
     SettlementLink,
     SimulationDepth,
+    SpecialNPCState,
+    WorldSaveData,
     WorldSnapshot,
 )
+from village_rp_engine.models.dialogue import Dialogue
+from village_rp_engine.models.event import TriggeredEvent
+from village_rp_engine.models.npc_state import NPCRecentState
 from village_rp_engine.models.player_action import PlayerAction
+from village_rp_engine.models.player_notice import PlayerNotice
 from village_rp_engine.models.rumor import Rumor
+from village_rp_engine.models.scene import Scene
 from village_rp_engine.systems.relationship_system import RelationshipSystem
 
 
 RELATIONSHIP_SYSTEM = RelationshipSystem()
 NPC_NAME_BY_ID = get_phase2_npc_name_map()
+SAVE_DIR = Path(__file__).resolve().parents[2] / 'saves'
+SAVE_SLOT_COUNT = 3
+SPECIAL_NPC_ID = 'wandering_stranger'
+PLAYER_INTERACTION_CHOICES: dict[str, dict[str, object]] = {
+    'support_guard': {
+        'label': '경비를 거들기',
+        'speaker_id': 'guard_captain',
+        'speaker_name': '경비대장',
+        'immediate_text': '경비대장이 짧게 고개를 끄덕이며 네 도움을 기억하겠다고 했다.',
+        'chronicle_text': '플레이어가 경비 지원을 약속했다.',
+        'delay_ticks': 1,
+        'security_delta': 1,
+        'stress_delta': 0,
+        'economy_delta': {},
+        'rumor_tags': ('player:guard_support',),
+        'special_npc_signal': 1,
+    },
+    'ignore_murmurs': {
+        'label': '소문을 무시하기',
+        'speaker_id': 'narrator',
+        'speaker_name': '나레이션',
+        'immediate_text': '네가 모른 척 지나치자, 주변의 웅성거림만 조금 더 짙어졌다.',
+        'chronicle_text': '플레이어가 불길한 웅성거림을 외면했다.',
+        'delay_ticks': 2,
+        'security_delta': 0,
+        'stress_delta': 2,
+        'economy_delta': {},
+        'rumor_tags': ('player:ignored_murmurs',),
+        'special_npc_signal': 0,
+    },
+    'follow_whisper': {
+        'label': '수상한 속삭임 따라가기',
+        'speaker_id': 'narrator',
+        'speaker_name': '나레이션',
+        'immediate_text': '네가 잠깐 걸음을 늦추자, 잡히지 않던 기척이 분명해졌다.',
+        'chronicle_text': '플레이어가 수상한 속삭임의 흔적을 좇기 시작했다.',
+        'delay_ticks': 2,
+        'security_delta': 0,
+        'stress_delta': 1,
+        'economy_delta': {},
+        'rumor_tags': ('player:followed_whisper',),
+        'special_npc_signal': 1,
+    },
+}
+
+
+def _validate_save_slot(slot: int) -> int:
+    if slot < 1 or slot > SAVE_SLOT_COUNT:
+        raise ValueError(f'저장 슬롯은 1부터 {SAVE_SLOT_COUNT}까지여야 한다.')
+    return slot
+
+
+def _ensure_save_dir() -> Path:
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    return SAVE_DIR
+
+
+def get_save_slot_path(slot: int) -> Path:
+    return _ensure_save_dir() / f'slot_{_validate_save_slot(slot)}.json'
+
+
+def list_recent_save_slots() -> list[dict[str, Any]]:
+    recent: list[dict[str, Any]] = []
+    for slot in range(1, SAVE_SLOT_COUNT + 1):
+        path = get_save_slot_path(slot)
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        recent.append(
+            {
+                'slot': slot,
+                'saved_at': payload.get('saved_at', ''),
+                'active_settlement_id': payload.get('active_settlement_id'),
+                'day': payload.get('day'),
+                'tick': payload.get('tick'),
+                'time_phase': payload.get('time_phase'),
+                'player_location': payload.get('player_location'),
+            }
+        )
+    return sorted(recent, key=lambda item: (item.get('saved_at', ''), item['slot']), reverse=True)
 
 
 def resolve_simulation_depth(
@@ -71,9 +167,55 @@ def can_travel_between_settlements(
     )
 
 
+def get_player_interaction_choices() -> tuple[dict[str, str], ...]:
+    return tuple(
+        {'choice_id': choice_id, 'label': str(choice['label'])}
+        for choice_id, choice in PLAYER_INTERACTION_CHOICES.items()
+    )
+
+
+def build_default_special_npc_states() -> dict[str, SpecialNPCState]:
+    return {
+        SPECIAL_NPC_ID: SpecialNPCState(npc_id=SPECIAL_NPC_ID),
+    }
+
+
+def _build_player_choice_influence(choice_id: str, settlement_id: str) -> InfluencePacket:
+    choice = PLAYER_INTERACTION_CHOICES[choice_id]
+    return InfluencePacket(
+        source_layer=f'player:{choice_id}',
+        target_settlement_id=settlement_id,
+        economy_delta=dict(choice.get('economy_delta', {})),
+        security_delta=int(choice.get('security_delta', 0)),
+        stress_delta=int(choice.get('stress_delta', 0)),
+        rumor_tags=tuple(choice.get('rumor_tags', ())),
+        scope='settlement',
+        delay_ticks=int(choice.get('delay_ticks', 0)),
+        chronicle_reference=f'choice:{choice_id}',
+        choice_id=choice_id,
+        player_driven=True,
+        special_npc_signal=int(choice.get('special_npc_signal', 0)),
+    )
+
+
+def _update_interaction_runtime_state(
+    interaction_runtime_state: InteractionRuntimeState,
+    choice_id: str,
+    tick: int,
+) -> InteractionRuntimeState:
+    choice_counts = dict(interaction_runtime_state.choice_counts)
+    choice_counts[choice_id] = choice_counts.get(choice_id, 0) + 1
+    return InteractionRuntimeState(
+        choice_counts=choice_counts,
+        last_choice_id=choice_id,
+        last_choice_tick=tick,
+    )
+
+
 def apply_pending_influences(
     settlement_state: WorldState,
     pending_influences: Iterable[InfluencePacket],
+    applied_bucket: list[InfluencePacket] | None = None,
 ) -> tuple[InfluencePacket, ...]:
     remaining_influences: list[InfluencePacket] = []
     economy_profile = dict(settlement_state.economy_profile)
@@ -85,11 +227,16 @@ def apply_pending_influences(
         if influence.target_settlement_id != settlement_state.settlement_id:
             remaining_influences.append(influence)
             continue
+        if influence.delay_ticks > 0:
+            remaining_influences.append(replace(influence, delay_ticks=influence.delay_ticks - 1))
+            continue
         applied = True
         for key, delta in influence.economy_delta.items():
             economy_profile[key] = economy_profile.get(key, 0) + delta
         security += influence.security_delta
         stress += influence.stress_delta
+        if applied_bucket is not None:
+            applied_bucket.append(influence)
 
     if applied:
         settlement_state.economy_profile = economy_profile
@@ -350,6 +497,8 @@ def build_world_snapshot(
     continent_definitions: dict[str, ContinentDefinition] | None = None,
     continent_states: dict[str, ContinentRuntimeState] | None = None,
     chronicle_archive: ChronicleArchive | None = None,
+    interaction_runtime_state: InteractionRuntimeState | None = None,
+    special_npc_states: dict[str, SpecialNPCState] | None = None,
 ) -> WorldSnapshot:
     single_settlement_mode = settlement_states is None and settlement_state is not None
     if settlement_states is None:
@@ -376,6 +525,11 @@ def build_world_snapshot(
         continent_states = build_phase4_continent_states()
     if active_settlement_id is None:
         active_settlement_id = next(iter(settlement_states))
+    if interaction_runtime_state is None:
+        interaction_runtime_state = InteractionRuntimeState()
+    resolved_special_npc_states = dict(build_default_special_npc_states())
+    if special_npc_states is not None:
+        resolved_special_npc_states.update(special_npc_states)
     current_entries = collect_world_chronicle_entries(
         settlement_states,
         active_settlement_id=active_settlement_id,
@@ -413,6 +567,8 @@ def build_world_snapshot(
         continent_definitions=dict(continent_definitions),
         continent_states=dict(continent_states),
         chronicle_archive=archive,
+        interaction_runtime_state=interaction_runtime_state,
+        special_npc_states=resolved_special_npc_states,
     )
 
 
@@ -424,12 +580,17 @@ class Phase1WorldEngine:
         settlement_links: Iterable[SettlementLink] = (),
         region_definitions: dict[str, RegionDefinition] | None = None,
         continent_definitions: dict[str, ContinentDefinition] | None = None,
+        initial_settlement_id: str | None = None,
     ) -> None:
         self.settlement_definitions = dict(settlement_definitions)
         self.settlement_engines = dict(settlement_engines)
         self.settlement_links = tuple(settlement_links)
         self.region_definitions = dict(region_definitions or {})
         self.continent_definitions = dict(continent_definitions or {})
+        resolved_initial_settlement_id = initial_settlement_id or (sorted(self.settlement_definitions)[0] if self.settlement_definitions else None)
+        if resolved_initial_settlement_id not in self.settlement_definitions:
+            raise ValueError('initial settlement id must exist in settlement definitions')
+        self.initial_settlement_id = resolved_initial_settlement_id
 
     @property
     def settlement_engine(self) -> TickEngine:
@@ -437,6 +598,56 @@ class Phase1WorldEngine:
 
     def get_settlement_engine(self, settlement_id: str) -> TickEngine:
         return self.settlement_engines[settlement_id]
+
+    def create_seed_snapshot(self, active_settlement_id: str | None = None) -> WorldSnapshot:
+        from village_rp_engine.core.mode_controller import create_state_from_settlement
+
+        if not self.settlement_definitions:
+            raise ValueError('settlement definitions are required to reset the world')
+
+        resolved_active_settlement_id = active_settlement_id or self.initial_settlement_id
+        if resolved_active_settlement_id not in self.settlement_definitions:
+            resolved_active_settlement_id = self.initial_settlement_id
+
+        settlement_states = {
+            settlement_id: create_state_from_settlement(
+                settlement_definition,
+                player_location=DEFAULT_PLAYER_LOCATION if settlement_id == resolved_active_settlement_id else None,
+            )
+            for settlement_id, settlement_definition in self.settlement_definitions.items()
+        }
+        snapshot = build_world_snapshot(
+            settlement_definitions=self.settlement_definitions,
+            settlement_states=settlement_states,
+            active_settlement_id=resolved_active_settlement_id,
+            recently_visited_ids=(),
+            settlement_links=self.settlement_links,
+            region_definitions=self.region_definitions,
+            region_states={
+                region_id: RegionRuntimeState(
+                    region_id=region_definition.region_id,
+                    security_risk=region_definition.security_risk,
+                    trade_flow=region_definition.trade_flow,
+                    rumor_density=region_definition.rumor_density,
+                    stress_modifier=region_definition.stress_modifier,
+                    economy_modifier=dict(region_definition.economy_modifier),
+                )
+                for region_id, region_definition in self.region_definitions.items()
+            },
+            continent_definitions=self.continent_definitions,
+            continent_states={
+                continent_id: ContinentRuntimeState(
+                    continent_id=continent_definition.continent_id,
+                    global_tension=continent_definition.global_tension,
+                    trade_pressure=continent_definition.trade_pressure,
+                    migration_pressure=continent_definition.migration_pressure,
+                    rumor_noise=continent_definition.rumor_noise,
+                    stability=continent_definition.stability,
+                )
+                for continent_id, continent_definition in self.continent_definitions.items()
+            },
+        )
+        return replace(snapshot, chronicle_archive=ChronicleArchive())
 
     def run_step(
         self,
@@ -447,6 +658,64 @@ class Phase1WorldEngine:
         recently_visited_ids: Iterable[str] | None = None,
     ) -> WorldSnapshot:
         action = action or PlayerAction.wait()
+        if action.action_type == 'travel':
+            travel_target = target_settlement_id or action.target_settlement_id
+            if travel_target and can_travel_between_settlements(
+                snapshot.active_settlement_id,
+                travel_target,
+                snapshot.settlement_links or self.settlement_links,
+            ):
+                travel_snapshot = snapshot
+                for _ in range(max(0, self._travel_tick_cost(action) - 1)):
+                    travel_snapshot = self._run_single_step(
+                        self._build_transit_snapshot(travel_snapshot),
+                        mode,
+                        action=PlayerAction.wait(),
+                        target_settlement_id=travel_snapshot.active_settlement_id,
+                        recently_visited_ids=travel_snapshot.recently_visited_ids,
+                    )
+                return self._run_single_step(
+                    self._build_transit_snapshot(travel_snapshot),
+                    mode,
+                    action=action,
+                    target_settlement_id=travel_target,
+                    recently_visited_ids=travel_snapshot.recently_visited_ids,
+                )
+        return self._run_single_step(
+            snapshot,
+            mode,
+            action=action,
+            target_settlement_id=target_settlement_id,
+            recently_visited_ids=recently_visited_ids,
+        )
+
+    def _travel_tick_cost(self, action: PlayerAction) -> int:
+        travel_mode = action.travel_mode or 'walk'
+        return {
+            'walk': 5,
+        }.get(travel_mode, 5)
+
+    def _build_transit_snapshot(self, snapshot: WorldSnapshot) -> WorldSnapshot:
+        states = {
+            settlement_id: clone_settlement_state(state)
+            for settlement_id, state in snapshot.settlement_states.items()
+        }
+        for settlement_id, state in states.items():
+            if settlement_id != snapshot.active_settlement_id:
+                state.player_location = None
+                continue
+            state.previous_player_location = state.player_location
+            state.player_location = None
+        return replace(snapshot, settlement_states=states)
+
+    def _run_single_step(
+        self,
+        snapshot: WorldSnapshot,
+        mode: Mode,
+        action: PlayerAction,
+        target_settlement_id: str | None = None,
+        recently_visited_ids: Iterable[str] | None = None,
+    ) -> WorldSnapshot:
         states = {
             settlement_id: clone_settlement_state(state)
             for settlement_id, state in snapshot.settlement_states.items()
@@ -470,6 +739,8 @@ class Phase1WorldEngine:
             continent_definitions=continent_definitions,
             continent_states=continent_states,
             chronicle_archive=snapshot.chronicle_archive,
+            interaction_runtime_state=snapshot.interaction_runtime_state,
+            special_npc_states=snapshot.special_npc_states,
         )
         continent_influences = produce_continent_influences(resolved_snapshot)
         region_states = refresh_region_states(region_definitions, region_states_input, states, continent_influences)
@@ -503,6 +774,66 @@ class Phase1WorldEngine:
             if public_locations:
                 destination_state.player_location = public_locations[0]
                 destination_state.previous_player_location = destination_state.player_location
+
+        if action.action_type == 'choose' and action.choice_id in PLAYER_INTERACTION_CHOICES:
+            choice = PLAYER_INTERACTION_CHOICES[action.choice_id]
+            active_state = states[snapshot.active_settlement_id]
+            active_state.dialogues = [
+                Dialogue(
+                    speaker_id=str(choice['speaker_id']),
+                    speaker_name=str(choice['speaker_name']),
+                    text=str(choice['immediate_text']),
+                )
+            ]
+            active_state.world_log.append(
+                f"상태 부여: 플레이어 선택 [{action.choice_id}] {choice['chronicle_text']}"
+            )
+            current_entries = collect_world_chronicle_entries(
+                states,
+                active_settlement_id=snapshot.active_settlement_id,
+                settlement_definitions=resolved_settlement_definitions,
+                region_states=region_states,
+                region_definitions=region_definitions,
+                continent_states=continent_states,
+                continent_definitions=continent_definitions,
+            )
+            archive = append_chronicle_entries(snapshot.chronicle_archive, current_entries)
+            chronicle_entries = build_world_chronicle_entries(
+                states,
+                active_settlement_id=snapshot.active_settlement_id,
+                settlement_definitions=resolved_settlement_definitions,
+                region_states=region_states,
+                region_definitions=region_definitions,
+                continent_states=continent_states,
+                continent_definitions=continent_definitions,
+                chronicle_archive=archive,
+            )
+            pending_influences = tuple(snapshot.pending_influences) + (
+                _build_player_choice_influence(action.choice_id, snapshot.active_settlement_id),
+            )
+            interaction_runtime_state = _update_interaction_runtime_state(
+                snapshot.interaction_runtime_state,
+                action.choice_id,
+                active_state.tick,
+            )
+            return WorldSnapshot(
+                settlement_definitions=dict(self.settlement_definitions),
+                settlement_states=states,
+                active_settlement_id=snapshot.active_settlement_id,
+                recently_visited_ids=tuple(snapshot.recently_visited_ids),
+                presentation_state=build_presentation_state(active_state, chronicle_entries=chronicle_entries),
+                simulation_depth=SimulationDepth.ACTIVE,
+                pending_influences=pending_influences,
+                settlement_links=active_links,
+                propagated_rumor_keys=tuple(snapshot.propagated_rumor_keys),
+                region_definitions=region_definitions,
+                region_states=region_states,
+                continent_definitions=continent_definitions,
+                continent_states=continent_states,
+                chronicle_archive=archive,
+                interaction_runtime_state=interaction_runtime_state,
+                special_npc_states=dict(snapshot.special_npc_states or build_default_special_npc_states()),
+            )
 
         if action.action_type == 'talk':
             active_state = states[snapshot.active_settlement_id]
@@ -543,6 +874,8 @@ class Phase1WorldEngine:
                 continent_definitions=continent_definitions,
                 continent_states=continent_states,
                 chronicle_archive=archive,
+                interaction_runtime_state=snapshot.interaction_runtime_state,
+                special_npc_states=dict(snapshot.special_npc_states or build_default_special_npc_states()),
             )
 
         region_snapshot = build_world_snapshot(
@@ -557,8 +890,11 @@ class Phase1WorldEngine:
             continent_definitions=continent_definitions,
             continent_states=continent_states,
             chronicle_archive=snapshot.chronicle_archive,
+            interaction_runtime_state=snapshot.interaction_runtime_state,
+            special_npc_states=snapshot.special_npc_states,
         )
         remaining_influences = tuple(snapshot.pending_influences) + produce_region_influences(region_snapshot)
+        applied_influences: list[InfluencePacket] = []
         depth_map: dict[str, SimulationDepth] = {}
         for settlement_id, state in states.items():
             depth = resolve_simulation_depth(
@@ -569,7 +905,7 @@ class Phase1WorldEngine:
             depth_map[settlement_id] = depth
             if depth != SimulationDepth.ACTIVE:
                 state.player_location = None
-            remaining_influences = apply_pending_influences(state, remaining_influences)
+            remaining_influences = apply_pending_influences(state, remaining_influences, applied_influences)
             if depth == SimulationDepth.ACTIVE:
                 local_action = action if settlement_id == next_active_settlement_id and action.action_type != 'travel' else PlayerAction.wait()
                 states[settlement_id] = self._run_active_step(self.get_settlement_engine(settlement_id), state, mode, local_action)
@@ -578,6 +914,7 @@ class Phase1WorldEngine:
             else:
                 states[settlement_id] = self._run_unvisited_step(self.get_settlement_engine(settlement_id), state)
 
+        states = _append_player_influence_traces(states, applied_influences)
         region_states = refresh_region_states(region_definitions, region_states, states, continent_influences)
         continent_states = refresh_continent_states(continent_definitions, continent_states, region_states)
         propagated_rumor_keys, states = self._propagate_rumors(
@@ -586,6 +923,11 @@ class Phase1WorldEngine:
             active_links,
         )
         active_state = states[next_active_settlement_id]
+        special_npc_states = _advance_special_npc_states(
+            snapshot.special_npc_states or build_default_special_npc_states(),
+            applied_influences,
+            active_state,
+        )
         current_entries = collect_world_chronicle_entries(
             states,
             active_settlement_id=next_active_settlement_id,
@@ -621,6 +963,8 @@ class Phase1WorldEngine:
             continent_definitions=continent_definitions,
             continent_states=continent_states,
             chronicle_archive=archive,
+            interaction_runtime_state=snapshot.interaction_runtime_state,
+            special_npc_states=special_npc_states,
         )
 
     def _run_active_step(self, settlement_engine: TickEngine, settlement_state: WorldState, mode: Mode, action: PlayerAction | None) -> WorldState:
@@ -677,6 +1021,8 @@ class Phase1WorldEngine:
             target_state = states[link.to_settlement_id]
             for rumor in source_state.rumor_log[-3:]:
                 origin_settlement_id = rumor.origin_settlement_id or link.from_settlement_id
+                if link.to_settlement_id == origin_settlement_id:
+                    continue
                 rumor_age = max(0, source_state.tick - rumor.tick)
                 freshness = rumor.freshness - 1
                 if rumor_age < link.rumor_speed or freshness <= 0:
@@ -692,7 +1038,7 @@ class Phase1WorldEngine:
                         day=target_state.day,
                         time_phase=target_state.time_phase,
                         location=_default_context_location(target_state),
-                        text=f'{origin_settlement_id}에서 {rumor.text}',
+                        text=_format_remote_rumor_text(rumor.text, origin_settlement_id),
                         origin_settlement_id=origin_settlement_id,
                         freshness=freshness,
                         intensity=max(1, rumor.intensity - 1),
@@ -701,6 +1047,81 @@ class Phase1WorldEngine:
                 )
                 target_state.world_log.append(f'외부 소문 유입: {origin_settlement_id} -> {link.to_settlement_id}')
         return seen_keys, states
+
+
+def _append_player_influence_traces(
+    states: dict[str, WorldState],
+    applied_influences: list[InfluencePacket],
+) -> dict[str, WorldState]:
+    for influence in applied_influences:
+        if not influence.player_driven:
+            continue
+        target_state = states.get(influence.target_settlement_id)
+        if target_state is None:
+            continue
+        economy_text = ', '.join(f"{key}={value}" for key, value in sorted(target_state.economy_profile.items())[:3])
+        target_state.world_log.append(
+            f"상태 부여: 선택의 여파 [{influence.chronicle_reference or influence.choice_id or influence.source_layer}] "
+            f"security {target_state.security}, stress {target_state.stress}, economy {economy_text}"
+        )
+    return states
+
+
+def _advance_special_npc_states(
+    current_states: dict[str, SpecialNPCState],
+    applied_influences: list[InfluencePacket],
+    active_state: WorldState,
+) -> dict[str, SpecialNPCState]:
+    special_npc_states = dict(build_default_special_npc_states())
+    special_npc_states.update(current_states)
+    current_state = special_npc_states[SPECIAL_NPC_ID]
+    status = current_state.status
+    linked_settlement_id = current_state.linked_settlement_id
+    signal_count = current_state.signal_count
+    last_signal_tick = current_state.last_signal_tick
+
+    relevant_influences = [
+        influence
+        for influence in applied_influences
+        if influence.player_driven and influence.special_npc_signal > 0
+    ]
+    if relevant_influences:
+        signal_count += sum(influence.special_npc_signal for influence in relevant_influences)
+        linked_settlement_id = relevant_influences[-1].target_settlement_id
+        last_signal_tick = active_state.tick
+        if status == 'DORMANT':
+            status = 'LINKED'
+            active_state.world_log.append('상태 부여: 수상한 기척이 네 선택 뒤에 남았다.')
+        elif status == 'LINKED' and signal_count >= 2:
+            status = 'CONVERGING'
+            active_state.world_log.append('상태 부여: 낯선 발자국이 점점 가까워지고 있다.')
+
+    encounter_ready = (
+        status == 'CONVERGING'
+        and linked_settlement_id == active_state.settlement_id
+        and active_state.tick >= last_signal_tick + 1
+        and active_state.time_phase in {'밤', '새벽'}
+    )
+    if encounter_ready:
+        status = 'ENCOUNTERED'
+        active_state.world_log.append('이벤트 발생: 수상한 나그네가 마침내 모습을 드러냈다.')
+        active_state.dialogues = [
+            *active_state.dialogues,
+            Dialogue(
+                speaker_id=SPECIAL_NPC_ID,
+                speaker_name='수상한 나그네',
+                text='네가 남긴 흔적을 따라 여기까지 왔다.',
+            ),
+        ]
+
+    special_npc_states[SPECIAL_NPC_ID] = SpecialNPCState(
+        npc_id=SPECIAL_NPC_ID,
+        status=status,
+        linked_settlement_id=linked_settlement_id,
+        signal_count=signal_count,
+        last_signal_tick=last_signal_tick,
+    )
+    return special_npc_states
 
 
 def clone_settlement_state(state: WorldState) -> WorldState:
@@ -774,11 +1195,199 @@ def _build_recently_visited_ids(
     return recent_ids[:2]
 
 
+
+
+def reset_world_to_seed(world_engine: Phase1WorldEngine | None = None) -> WorldSnapshot:
+    if world_engine is None:
+        from village_rp_engine.core.mode_controller import build_world_engine
+
+        world_engine = build_world_engine()
+    return world_engine.create_seed_snapshot()
+
+
+def _serialize_world_state(state: WorldState) -> dict:
+    return {
+        'tick': state.tick,
+        'day': state.day,
+        'time_phase': state.time_phase,
+        'settlement_id': state.settlement_id,
+        'security': state.security,
+        'stress': state.stress,
+        'economy_profile': dict(state.economy_profile),
+        'npc_locations': dict(state.npc_locations),
+        'previous_npc_locations': dict(state.previous_npc_locations),
+        'player_location': state.player_location,
+        'previous_player_location': state.previous_player_location,
+        'triggered_events': [asdict(event) for event in state.triggered_events],
+        'visible_scenes': [asdict(scene) for scene in state.visible_scenes],
+        'dialogues': [asdict(dialogue) for dialogue in state.dialogues],
+        'rumor_log': [asdict(rumor) for rumor in state.rumor_log],
+        'world_log': list(state.world_log),
+        'relationships': [
+            {'left': left, 'right': right, 'score': score}
+            for (left, right), score in sorted(state.relationships.items())
+        ],
+        'player_relationships': dict(state.player_relationships),
+        'quest_status': dict(state.quest_status),
+        'quest_contacts': {quest_id: sorted(contacts) for quest_id, contacts in state.quest_contacts.items()},
+        'npc_recent_states': {npc_id: [asdict(item) for item in items] for npc_id, items in state.npc_recent_states.items()},
+        'player_notices': [asdict(notice) for notice in state.player_notices],
+        'locked_npc_ids_for_tick': sorted(state.locked_npc_ids_for_tick),
+        'event_last_trigger_tick': dict(state.event_last_trigger_tick),
+        'rumor_history_keys': sorted(state.rumor_history_keys),
+        'recent_scene_event_ids': sorted(state.recent_scene_event_ids),
+    }
+
+
+def _deserialize_world_state(data: dict) -> WorldState:
+    return WorldState(
+        tick=data['tick'],
+        day=data['day'],
+        time_phase=data['time_phase'],
+        settlement_id=data['settlement_id'],
+        security=data['security'],
+        stress=data['stress'],
+        economy_profile=dict(data['economy_profile']),
+        npc_locations=dict(data['npc_locations']),
+        previous_npc_locations=dict(data['previous_npc_locations']),
+        player_location=data.get('player_location'),
+        previous_player_location=data.get('previous_player_location'),
+        triggered_events=[TriggeredEvent(**event) for event in data.get('triggered_events', [])],
+        visible_scenes=[Scene(**scene) for scene in data.get('visible_scenes', [])],
+        dialogues=[Dialogue(**dialogue) for dialogue in data.get('dialogues', [])],
+        rumor_log=[Rumor(**rumor) for rumor in data.get('rumor_log', [])],
+        world_log=list(data.get('world_log', [])),
+        relationships={
+            (item['left'], item['right']): item['score']
+            for item in data.get('relationships', [])
+        },
+        player_relationships=dict(data.get('player_relationships', {})),
+        quest_status=dict(data.get('quest_status', {})),
+        quest_contacts={quest_id: set(contacts) for quest_id, contacts in data.get('quest_contacts', {}).items()},
+        npc_recent_states={npc_id: [NPCRecentState(**item) for item in items] for npc_id, items in data.get('npc_recent_states', {}).items()},
+        player_notices=[PlayerNotice(**notice) for notice in data.get('player_notices', [])],
+        locked_npc_ids_for_tick=set(data.get('locked_npc_ids_for_tick', [])),
+        event_last_trigger_tick=dict(data.get('event_last_trigger_tick', {})),
+        rumor_history_keys=set(data.get('rumor_history_keys', [])),
+        recent_scene_event_ids=set(data.get('recent_scene_event_ids', [])),
+    )
+
+
+def save_world_state(snapshot: WorldSnapshot) -> dict:
+    save_data = WorldSaveData(
+        settlement_states={settlement_id: _serialize_world_state(state) for settlement_id, state in snapshot.settlement_states.items()},
+        region_states={region_id: asdict(state) for region_id, state in snapshot.region_states.items()},
+        continent_states={continent_id: asdict(state) for continent_id, state in snapshot.continent_states.items()},
+        active_settlement_id=snapshot.active_settlement_id,
+        recently_visited_ids=tuple(snapshot.recently_visited_ids),
+        pending_influences=tuple(asdict(influence) for influence in snapshot.pending_influences),
+        propagated_rumor_keys=tuple(snapshot.propagated_rumor_keys),
+        chronicle_archive_entries=tuple(asdict(entry) for entry in snapshot.chronicle_archive.entries),
+        interaction_runtime_state=asdict(snapshot.interaction_runtime_state),
+        special_npc_states={npc_id: asdict(state) for npc_id, state in snapshot.special_npc_states.items()},
+    )
+    return asdict(save_data)
+
+
+def save_world_state_to_slot(snapshot: WorldSnapshot, slot: int) -> dict[str, Any]:
+    validated_slot = _validate_save_slot(slot)
+    payload = {
+        'slot': validated_slot,
+        'saved_at': datetime.now().isoformat(timespec='seconds'),
+        'active_settlement_id': snapshot.active_settlement_id,
+        'day': snapshot.settlement_state.day,
+        'tick': snapshot.settlement_state.tick,
+        'time_phase': snapshot.settlement_state.time_phase,
+        'player_location': snapshot.settlement_state.player_location,
+        'world_save_data': save_world_state(snapshot),
+    }
+    get_save_slot_path(validated_slot).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    return {key: value for key, value in payload.items() if key != 'world_save_data'}
+
+
+def load_world_state_from_slot(
+    slot: int,
+    *,
+    settlement_definitions: dict[str, SettlementDefinition] | None = None,
+    settlement_links: Iterable[SettlementLink] = (),
+    region_definitions: dict[str, RegionDefinition] | None = None,
+    continent_definitions: dict[str, ContinentDefinition] | None = None,
+) -> WorldSnapshot:
+    path = get_save_slot_path(slot)
+    if not path.exists():
+        raise FileNotFoundError(f'저장 슬롯 {slot}이 비어 있다.')
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    world_save_data = payload.get('world_save_data')
+    if not isinstance(world_save_data, dict):
+        raise ValueError('유효한 저장 데이터가 아니다.')
+    return load_world_state(
+        world_save_data,
+        settlement_definitions=settlement_definitions,
+        settlement_links=settlement_links,
+        region_definitions=region_definitions,
+        continent_definitions=continent_definitions,
+    )
+
+
+def load_world_state(
+    saved_data: dict,
+    *,
+    settlement_definitions: dict[str, SettlementDefinition] | None = None,
+    settlement_links: Iterable[SettlementLink] = (),
+    region_definitions: dict[str, RegionDefinition] | None = None,
+    continent_definitions: dict[str, ContinentDefinition] | None = None,
+) -> WorldSnapshot:
+    settlement_states = {
+        settlement_id: _deserialize_world_state(state_data)
+        for settlement_id, state_data in saved_data['settlement_states'].items()
+    }
+    region_states = {
+        region_id: RegionRuntimeState(**state_data)
+        for region_id, state_data in saved_data.get('region_states', {}).items()
+    }
+    continent_states = {
+        continent_id: ContinentRuntimeState(**state_data)
+        for continent_id, state_data in saved_data.get('continent_states', {}).items()
+    }
+    chronicle_archive = ChronicleArchive(
+        entries=tuple(ChronicleEntry(**entry) for entry in saved_data.get('chronicle_archive_entries', []))
+    )
+    pending_influences = tuple(InfluencePacket(**item) for item in saved_data.get('pending_influences', []))
+    interaction_runtime_state = InteractionRuntimeState(**saved_data.get('interaction_runtime_state', {}))
+    special_npc_states = {
+        npc_id: SpecialNPCState(**state_data)
+        for npc_id, state_data in saved_data.get('special_npc_states', {}).items()
+    }
+    return build_world_snapshot(
+        settlement_definitions=settlement_definitions or build_phase2_settlements(),
+        settlement_states=settlement_states,
+        active_settlement_id=saved_data['active_settlement_id'],
+        recently_visited_ids=tuple(saved_data.get('recently_visited_ids', ())),
+        settlement_links=tuple(settlement_links),
+        propagated_rumor_keys=tuple(saved_data.get('propagated_rumor_keys', ())),
+        region_definitions=region_definitions or build_phase3_regions(),
+        region_states=region_states or build_phase3_region_states(),
+        continent_definitions=continent_definitions or {build_phase4_continent().continent_id: build_phase4_continent()},
+        continent_states=continent_states or build_phase4_continent_states(),
+        pending_influences=pending_influences,
+        chronicle_archive=chronicle_archive,
+        interaction_runtime_state=interaction_runtime_state,
+        special_npc_states=special_npc_states,
+    )
+
 def _default_context_location(settlement_state: WorldState) -> str:
     for location in settlement_state.npc_locations.values():
         if location != '집':
             return location
     return '광장'
+
+
+def _format_remote_rumor_text(text: str, origin_settlement_id: str) -> str:
+    prefix = f'{origin_settlement_id}에서 '
+    return text if text.startswith(prefix) else f'{prefix}{text}'
 
 
 def _build_npc_status_line(settlement_state: WorldState, npc_id: str, location: str) -> str:

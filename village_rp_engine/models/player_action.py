@@ -9,6 +9,8 @@ class PlayerAction:
     target_location: str | None = None
     target_npc_id: str | None = None
     target_settlement_id: str | None = None
+    travel_mode: str | None = None
+    choice_id: str | None = None
 
     @classmethod
     def move(cls, target_location: str) -> "PlayerAction":
@@ -19,8 +21,12 @@ class PlayerAction:
         return cls(action_type='talk', target_npc_id=target_npc_id)
 
     @classmethod
-    def travel(cls, target_settlement_id: str) -> "PlayerAction":
-        return cls(action_type='travel', target_settlement_id=target_settlement_id)
+    def travel(cls, target_settlement_id: str, travel_mode: str = "walk") -> "PlayerAction":
+        return cls(action_type='travel', target_settlement_id=target_settlement_id, travel_mode=travel_mode)
+
+    @classmethod
+    def choose(cls, choice_id: str) -> "PlayerAction":
+        return cls(action_type='choose', choice_id=choice_id)
 
     @classmethod
     def wait(cls) -> "PlayerAction":

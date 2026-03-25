@@ -1,123 +1,136 @@
 # Village RP Engine
 
-텍스트 기반 마을 시뮬레이션 엔진이다. 현재 상태는 Continental RP 구조의 `Phase 2: Multi-Settlement Network`까지 반영된 검증용 엔진이다.
+텍스트 기반 마을 시뮬레이션 엔진이다. 현재 저장소 상태는 단일 정착지 실험 단계를 넘어, 정착지-지역-대륙 계층과 chronicle/history 조회, 저장/불러오기, 선택형 플레이어 상호작용까지 포함한 검증용 MVP로 올라와 있다.
 
-## 현재 범위
+이 문서는 현재 코드 기준 상태를 설명한다.
 
-이번 버전(`v0.2-phase2`)에 포함된 것:
+## 현재 구현 범위
 
-- 단일 엔진 위의 multi-settlement world wrapper
-- 3개 settlement registry
+- 정착지 3개
   - `village_1`
   - `village_2`
   - `town_1`
-- canonical seed container
-  - `SettlementDefinition`
-- world root wrapper
-  - `WorldSnapshot`
-  - `Phase1WorldEngine` 기반 multi-settlement dispatch
-- depth policy
+- 지역 2개
+  - `north_fields`
+  - `river_trade`
+- 대륙 1개
+  - `continent_1`
+- 시뮬레이션 depth 분리
   - `ACTIVE`
   - `RECENT`
   - `UNVISITED`
-- settlement link 기반 이동 및 rumor propagation
-- ACTIVE settlement 전용 scene / dialogue 생성
-- player 무시간 `talk`
-- NPC 상태 / 관계 / 루머 / notice
-- 플레이어 호감도
-- 촌장 중재 퀘스트 1개
-- CLI / demo / 텍스트 웹 UI
+- 정착지 간 이동과 rumor propagation
+- 지역 influence와 대륙 influence의 하향 반영
+- chronicle archive 및 history query/comparison
+- 플레이어 선택 기반 delayed influence
+- 특수 NPC 상태 추적
+  - `DORMANT -> LINKED -> CONVERGING -> ENCOUNTERED`
+- 저장 / 불러오기 / 월드 리셋
+- CLI / 데모 / 최소 Web UI
 - 테스트 스위트
 
-## 구조 원칙
+## 시스템 요약
 
-- Invisible World = State
-- Visible World = Scene
-- `SettlementDefinition`은 seed source다
-- runtime truth는 settlement state에만 존재한다
-- `presentation_state`는 항상 derived-only다
-- scene / dialogue는 on-demand 생성이다
-- ACTIVE settlement만 full interaction을 수행한다
-- RECENT / UNVISITED는 경량 업데이트만 수행한다
-- cross-settlement에서는 event가 아니라 rumor만 전파한다
-
-## 구현된 기능 목록
-
-### Settlement Layer
+### 1. Settlement Layer
 
 - 시간대 순환: `아침 / 낮 / 저녁 / 밤 / 새벽`
-- tick / day 기반 월드 진행
+- tick / day 기반 진행
 - NPC 일정 기반 이동
-- 장소 / 시간 / 참여자 조건 기반 이벤트 발생
-- recent state 부여 / 만료
-- NPC 간 관계 점수
-- rumor 생성 / dedupe
-- 공통 NPC notice 레이어
-- 플레이어 호감도 `-2 ~ +2`
-- 초미니 퀘스트 1개
-  - `mediate_tavern_conflict`
+- 조건부 이벤트 발동
+- scene / dialogue on-demand 생성
+- rumor 생성 및 dedupe
+- NPC recent state, notice, 관계도 관리
+- 플레이어 호감도 추적
+- 퀘스트 상태 추적
 
-### World Wrapper
+### 2. World Layer
 
-- multi-settlement registry 관리
-- settlement link registry 관리
-- depth별 dispatch
-  - `ACTIVE`: full interaction
-  - `RECENT`: lightweight update
-  - `UNVISITED`: numeric-only update
-- settlement 간 rumor propagation
-- player inter-settlement travel
-- chronicle summary hook
+- multi-settlement registry
+- settlement link 기반 이동 가능 여부 판정
+- `ACTIVE / RECENT / UNVISITED` 별 차등 시뮬레이션
+- cross-settlement rumor propagation
+- recently visited settlement 추적
+- pending influence 누적 및 지연 적용
 
-### Presentation Layer
+### 3. Region / Continent Layer
 
-- visible scene 생성
-- dialogue surface 생성
-- world log / rumor log / chronicle 표시
-- 최소 텍스트 웹 UI
+- region runtime state 갱신
+  - `security_risk`
+  - `trade_flow`
+  - `rumor_density`
+  - `stress_modifier`
+- continent runtime state 갱신
+  - `global_tension`
+  - `trade_pressure`
+  - `migration_pressure`
+  - `rumor_noise`
+  - `stability`
+- continent -> region -> settlement 방향의 influence 반영
 
-## 실행 순서
+### 4. Chronicle / History Layer
 
-### 1. 테스트
+- chronicle archive 누적
+- 최근 세계 변화 조회
+- settlement / region / continent 단위 history 조회
+- 기간 기반 조회
+- scope diff 요약
+- settlement / region / continent 비교
+- 플레이어 기준 direct / indirect timeline 조회
+
+### 5. Gameplay Layer
+
+- `choose <선택>` 기반 플레이어 선택 입력
+- 선택 결과를 즉시 수치 변경하지 않고 influence packet으로 지연 반영
+- 현재 기본 선택
+  - `support_guard`
+  - `ignore_murmurs`
+  - `follow_whisper`
+- 선택 누적에 따른 특수 NPC 진행
+  - `wandering_stranger`
+
+### 6. Persistence Layer
+
+- 저장 슬롯 3개
+- 저장 파일 위치: `saves/slot_<1-3>.json`
+- 저장 대상
+  - settlement states
+  - region states
+  - continent states
+  - chronicle archive
+  - pending influences
+  - interaction runtime state
+  - special NPC states
+- `reset` 시 seed snapshot으로 복귀
+
+## 실행
+
+### 테스트
 
 ```powershell
 pytest -q
 ```
 
-### 2. CLI 실행
+### CLI
+
+RP 모드:
 
 ```powershell
 python -m village_rp_engine.main --mode rp
 ```
 
-지원 행동:
-
-- `wait`
-- `move <장소>`
-- `talk <대상>`
-- `travel <settlement>`
-
-### 3. Flow Demo
+Observer 모드:
 
 ```powershell
-python run_demo.py
+python -m village_rp_engine.main --mode observer --ticks 10
 ```
 
-### 4. Injection Demo
-
-경비대장 새벽 notice 확인:
+추가 옵션:
 
 ```powershell
-python demo_guard_dawn.py
+python -m village_rp_engine.main --mode rp --ticks 20
 ```
 
-촌장 간접 중재 반응 확인:
-
-```powershell
-python demo_elder_mediation.py
-```
-
-### 5. Web UI
+### Web UI
 
 ```powershell
 python web_ui.py
@@ -127,50 +140,116 @@ python web_ui.py
 
 - `http://127.0.0.1:8000`
 
+호스트/포트 변경:
+
+```powershell
+python web_ui.py --host 0.0.0.0 --port 8010
+```
+
+### 데모
+
+Flow demo:
+
+```powershell
+python run_demo.py
+```
+
+경비대장 새벽 notice/injection demo:
+
+```powershell
+python demo_guard_dawn.py
+```
+
+촌장 중재 반응 demo:
+
+```powershell
+python demo_elder_mediation.py
+```
+
+## CLI 명령
+
+기본 행동:
+
+- `wait`
+- `move <장소>`
+- `talk <대상>`
+- `travel <settlement>`
+- `choose <선택>`
+- `save <1-3>`
+- `load <1-3>`
+- `reset`
+
+history 조회:
+
+- `history recent`
+- `history settlement <id>`
+- `history region <id>`
+- `history continent <id>`
+- `history compare settlement <a> <b>`
+- `history compare region <a> <b>`
+- `history compare continent <a> [b]`
+
+입력 별칭 예시:
+
+- `이동 술집`
+- `시장가기`
+- `대화 촌장`
+- `말걸기 경비대장`
+- `travel village_2`
+- `선택 follow_whisper`
+
 ## 플레이어 행동 규칙
 
-- `move` -> tick 소비
-- `wait` -> tick 소비
-- `talk` -> tick 소비하지 않음
-- `travel` -> world-level settlement 이동
+- `wait`는 tick을 소비한다.
+- `move`는 tick을 소비한다.
+- `travel`은 world-level 이동이며 tick을 소비한다.
+- `talk`는 현재 시점 내부 상호작용이라 tick을 소비하지 않는다.
+- `choose`는 즉시 world state를 크게 바꾸지 않고, 이후 tick에서 여파가 반영될 수 있다.
 
-즉, 대화는 현재 시점 내부 인터랙션이고, settlement 이동은 link 기반 world action이다.
+## Web UI에서 볼 수 있는 것
 
-## 이번 버전에 포함된 것
+- 현재 정착지, 위치, 시간대
+- visible scenes / dialogues / 발생 이벤트
+- rumor 요약
+- quest / favor / relationship
+- 최근 저장 목록
+- NPC 위치 / 상태 로그
+- chronicle 요약
+- 이동 / 대화 / 선택 / 저장 / 불러오기 / 리셋 버튼
 
-- 마을 3개 이상을 가진 연결 world
-- settlement link 기반 이동 제한
-- cross-settlement rumor propagation
-- ACTIVE / RECENT / UNVISITED 차등 처리
-- 플레이어 존재를 active settlement 하나로만 유지
-- scene / dialogue를 ACTIVE settlement에만 표시
-- 플레이어 호감도
-- 퀘스트 1개
+## 현재 문서 기준으로 이미 구현된 것
 
-## 이번에 안 한 것
+- Phase 2: multi-settlement world
+- Phase 3: region layer
+- Phase 4: continent layer
+- Phase 5: chronicle archive
+- Phase 6: history query / comparison
+- Phase 8: gameplay interaction layer 일부
+- save / load / reset
 
-- 저장 / 불러오기
-- 다중 퀘스트
-- inventory / 보상 아이템
-- reputation 시스템
-- stealth / 은신
-- 검문 / 체포 / 제재
+즉, 예전 README에 있던 "저장/불러오기 미구현", "RegionLayer 미구현", "ContinentLayer 미구현" 설명은 이제 맞지 않는다.
+
+## 아직 없는 것
+
+- inventory / 아이템 보상
+- reputation 전역 시스템
+- stealth / 검문 / 체포
 - 전투
-- RegionLayer 실제 구현
-- ContinentLayer 실제 구현
-- diplomacy
-- macro economy
-- caravan / trade simulation
+- caravan / trade simulation 심화
 - pathfinding / multi-hop travel
-- NPC cross-settlement full simulation
-- 복잡한 UI(지도, 게이지, 설정창)
+- NPC의 full cross-settlement simulation
+- 복잡한 지도형 UI
+- 콘텐츠 볼륨이 큰 다중 퀘스트 구조
 
-## 다음 단계에서 할 것
+## 저장소에서 먼저 볼 파일
 
-- RegionLayer stub를 실제 influence producer로 확장
-- RECENT / UNVISITED 정책 정교화
-- settlement별 seed 다양화
-- chronicle surface 강화
-- 다중 퀘스트 구조
-- 저장 / 불러오기
-- 더 많은 settlement / 장소 / NPC 확장
+- `village_rp_engine/main.py`
+- `village_rp_engine/core/mode_controller.py`
+- `village_rp_engine/core/world_engine.py`
+- `village_rp_engine/logs/chronicle.py`
+- `web_ui.py`
+
+## 참고
+
+- 저장 데이터는 실행 중 자동 생성될 수 있으므로 `saves/` 디렉터리가 생긴다.
+- 현재 작업 트리에는 코드 변경이 이미 존재할 수 있으므로, 문서는 코드 기준 동작만 반영한다.

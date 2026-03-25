@@ -191,6 +191,16 @@ ARRIVAL_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
             "대장간에 들어선 경비대장이 주변을 경계하는 눈으로 살폈다.",
         ],
     },
+    "시장": {
+        "rp": [
+            "시장 입구 쪽에서 {actor1_subject} 오가는 사람들 사이를 살피고 있었다.",
+            "네가 시장으로 들어서자, {actor1_subject} 좌판 사이를 천천히 훑어보고 있었다.",
+        ],
+        "observer": [
+            "시장에서는 {actor1_subject} 오가는 사람들 틈에서 주변을 살피고 있었다.",
+            "시장 한쪽에서 {actor1_subject} 사람들 움직임을 느긋하게 바라보고 있었다.",
+        ],
+    },
 }
 
 IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
@@ -224,6 +234,16 @@ IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
             "광장 한쪽에서 {actor1_subject} 사람들 오가는 모습을 느긋하게 살피고 있었다.",
         ],
     },
+    "시장": {
+        "rp": [
+            "시장 안으로 들어서자, {actor1_subject} 붐비는 좌판 사이를 둘러보고 있었다.",
+            "시장 한쪽에서는 {actor1_subject} 사람들 흐름을 살피며 자리를 지키고 있었다.",
+        ],
+        "observer": [
+            "시장에서는 {actor1_subject} 붐비는 사람들 틈에서 주변을 살피고 있었다.",
+            "시장 한쪽에서 {actor1_subject} 좌판 사이를 느긋하게 둘러보고 있었다.",
+        ],
+    },
 }
 
 GUARD_CAPTAIN_IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
@@ -255,6 +275,16 @@ GUARD_CAPTAIN_IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "observer": [
             "대장간 안에서 경비대장이 내부를 경계하듯 둘러보고 있었다.",
             "경비대장은 대장간 내부를 살피며 이상이 없는지 확인하고 있었다.",
+        ],
+    },
+    "시장": {
+        "rp": [
+            "시장 안에서 경비대장이 붐비는 좌판 사이를 경계하듯 살피고 있었다.",
+            "경비대장이 시장으로 들어서며 오가는 사람들을 빠르게 훑어보았다.",
+        ],
+        "observer": [
+            "시장에서는 경비대장이 사람들 흐름을 경계하듯 살피고 있었다.",
+            "시장 안으로 들어온 경비대장이 좌판 주변을 점검하듯 둘러보았다.",
         ],
     },
 }

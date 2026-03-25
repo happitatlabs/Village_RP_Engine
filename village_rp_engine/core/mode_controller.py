@@ -52,6 +52,7 @@ def build_world_engine() -> Phase1WorldEngine:
         settlement_links=build_phase2_settlement_links(),
         region_definitions=build_phase3_regions(),
         continent_definitions={build_phase4_continent().continent_id: build_phase4_continent()},
+        initial_settlement_id='village_1',
     )
 
 

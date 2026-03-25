@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections import deque
 from collections.abc import Callable
 
 from village_rp_engine.config import DEFAULT_SIMULATION_TICKS
 from village_rp_engine.core.mode_controller import build_world_engine, create_default_world_snapshot, run_mode_step
-from village_rp_engine.core.world_engine import can_travel_between_settlements
+from village_rp_engine.core.world_engine import (
+    can_travel_between_settlements,
+    get_player_interaction_choices,
+    load_world_state_from_slot,
+    reset_world_to_seed,
+    save_world_state_to_slot,
+)
 from village_rp_engine.input_aliases import parse_player_input
 from village_rp_engine.logs.chronicle import (
     build_chronicle_query,
@@ -38,24 +45,44 @@ def run_simulation(ticks: int = DEFAULT_SIMULATION_TICKS, mode: Mode = Mode.RP) 
     print()
 
     for _ in range(ticks):
-        settlement_definition = snapshot.settlement_definition
-        locations = [location for location in settlement_definition.locations if location != '집']
-        npc_ids = list(settlement_definition.npc_ids)
-        travel_targets = [
-            settlement_id
-            for settlement_id in snapshot.settlement_definitions
-            if can_travel_between_settlements(snapshot.active_settlement_id, settlement_id, snapshot.settlement_links)
-        ]
-        action_provider = (
-            lambda current_state=snapshot.settlement_state, current_snapshot=snapshot: prompt_player_action(
-                locations,
-                npc_ids,
-                current_location=current_state.player_location,
-                travel_targets=travel_targets,
-                history_snapshot=current_snapshot,
-            )
-        ) if mode == Mode.RP else None
-        snapshot = run_mode_step(world_engine, snapshot, mode, action_provider=action_provider)
+        if mode == Mode.RP:
+            action: PlayerAction | None = None
+            while True:
+                settlement_definition = snapshot.settlement_definition
+                locations = [location for location in settlement_definition.locations if location != '집']
+                npc_ids = list(settlement_definition.npc_ids)
+                travel_targets = [
+                    settlement_id
+                    for settlement_id in snapshot.settlement_definitions
+                    if can_travel_between_settlements(snapshot.active_settlement_id, settlement_id, snapshot.settlement_links)
+                ]
+                prompt_result = prompt_player_action(
+                    locations,
+                    npc_ids,
+                    current_location=snapshot.settlement_state.player_location,
+                    travel_targets=travel_targets,
+                    choice_ids=[choice['choice_id'] for choice in get_player_interaction_choices()],
+                    history_snapshot=snapshot,
+                    save_func=lambda slot, current_snapshot=snapshot: save_world_state_to_slot(current_snapshot, slot),
+                    load_func=lambda slot: load_world_state_from_slot(
+                        slot,
+                        settlement_definitions=world_engine.settlement_definitions,
+                        settlement_links=world_engine.settlement_links,
+                        region_definitions=world_engine.region_definitions,
+                        continent_definitions=world_engine.continent_definitions,
+                    ),
+                    reset_func=lambda: reset_world_to_seed(world_engine),
+                )
+                if isinstance(prompt_result, WorldSnapshot):
+                    snapshot = prompt_result
+                    continue
+                if prompt_result is None:
+                    continue
+                action = prompt_result
+                break
+            snapshot = run_mode_step(world_engine, snapshot, mode, action_provider=lambda action=action: action)
+        else:
+            snapshot = run_mode_step(world_engine, snapshot, mode, action_provider=None)
         chronicle_query = build_chronicle_query(snapshot)
         world_summary = build_world_summary_snapshot(snapshot)
         player_history = get_player_timeline(snapshot, limit=4)
@@ -155,22 +182,68 @@ def prompt_player_action(
     npc_ids: list[str],
     current_location: str | None,
     travel_targets: list[str] | None = None,
+    choice_ids: list[str] | None = None,
     input_func: Callable[[str], str] = input,
     output_func: Callable[[str], None] = print,
     history_snapshot: WorldSnapshot | None = None,
-) -> PlayerAction:
+    save_func: Callable[[int], dict] | None = None,
+    load_func: Callable[[int], WorldSnapshot] | None = None,
+    reset_func: Callable[[], WorldSnapshot] | None = None,
+) -> PlayerAction | WorldSnapshot | None:
     location_text = ', '.join(locations)
     npc_text = ', '.join(npc_ids)
     travel_text = ', '.join(travel_targets or [])
+    choice_text = ', '.join(choice_ids or [])
     output_func(
-        '행동 선택: `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>`, `history ...` '
-        f'(예: `이동 술집`, `대화 대장장이`, `travel village_2`, `history recent`) ({location_text} | {npc_text} | {travel_text})'
+        '행동 선택: `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>`, `choose <선택>`, `history ...`, `save <1-3>`, `load <1-3>`, `reset` '
+        f'(예: `이동 술집`, `대화 대장장이`, `travel village_2`, `choose follow_whisper`, `save 1`, `load 2`) ({location_text} | {npc_text} | {travel_text} | {choice_text})'
     )
     while True:
         try:
             raw = input_func('> ')
         except EOFError:
             return PlayerAction.wait()
+
+        save_tokens = raw.strip().split()
+        if save_tokens and save_tokens[0] == 'save':
+            if save_func is None:
+                output_func('save를 사용할 수 없습니다.')
+            elif len(save_tokens) != 2 or not save_tokens[1].isdigit():
+                output_func('save 사용법: `save <1-3>`')
+            else:
+                try:
+                    result = save_func(int(save_tokens[1]))
+                except Exception:
+                    output_func('save 실패: 유효한 슬롯(1-3)이 필요하다.')
+                else:
+                    output_func(json.dumps(result, ensure_ascii=False))
+                    return history_snapshot
+            continue
+
+        if raw.strip() == 'reset':
+            if reset_func is None:
+                output_func('reset을 사용할 수 없습니다.')
+            else:
+                snapshot = reset_func()
+                output_func('world reset complete')
+                return snapshot
+            continue
+
+        load_tokens = raw.strip().split()
+        if load_tokens and load_tokens[0] == 'load':
+            if load_func is None:
+                output_func('load를 사용할 수 없습니다.')
+            elif len(load_tokens) != 2 or not load_tokens[1].isdigit():
+                output_func('load 사용법: `load <1-3>`')
+            else:
+                try:
+                    snapshot = load_func(int(load_tokens[1]))
+                except Exception:
+                    output_func('load 실패: 유효한 저장 슬롯(1-3)이 필요하다.')
+                else:
+                    output_func('world load complete')
+                    return snapshot
+            continue
 
         if raw.strip().startswith('history'):
             if history_snapshot is None:
@@ -181,7 +254,7 @@ def prompt_player_action(
 
         action = parse_player_input(raw)
         if action is None:
-            output_func('지원하지 않는 행동입니다. `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>` 형식으로 입력하세요.')
+            output_func('지원하지 않는 행동입니다. `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>`, `choose <선택>` 형식으로 입력하세요.')
             continue
 
         if action.action_type == 'move' and action.target_location:
@@ -203,10 +276,16 @@ def prompt_player_action(
         if action.action_type == 'talk' and action.target_npc_id:
             return action
 
+        if action.action_type == 'choose' and action.choice_id:
+            if not choice_ids or action.choice_id not in choice_ids:
+                output_func(f'지원하지 않는 선택입니다. 가능한 선택: {choice_text}')
+                continue
+            return action
+
         if action.action_type == 'wait':
             return action
 
-        output_func('지원하지 않는 행동입니다. `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>` 형식으로 입력하세요.')
+        output_func('지원하지 않는 행동입니다. `wait`, `move <장소>`, `talk <대상>`, `travel <settlement>`, `choose <선택>` 형식으로 입력하세요.')
 
 
 if __name__ == '__main__':

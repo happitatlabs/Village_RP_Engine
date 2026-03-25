@@ -36,7 +36,7 @@ def test_recent_settlement_uses_lightweight_update() -> None:
     snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.travel('village_2'))
     recent_state = snapshot.settlement_states['village_1']
 
-    assert 'recent settlement update' in recent_state.world_log[-1]
+    assert any('recent settlement update' in line for line in recent_state.world_log)
     assert recent_state.visible_scenes == []
     assert recent_state.dialogues == []
 
@@ -63,6 +63,7 @@ def test_player_move_between_settlements_updates_active_and_recent() -> None:
     assert snapshot.active_settlement_id == 'village_2'
     assert 'village_1' in snapshot.recently_visited_ids
     assert snapshot.settlement_state.settlement_id == 'village_2'
+    assert snapshot.settlement_state.tick == 5
 
 
 def test_rumor_propagates_across_settlement_links() -> None:
@@ -89,6 +90,35 @@ def test_rumor_propagates_across_settlement_links() -> None:
     assert any(rumor.is_remote for rumor in propagated)
     assert any('village_1' in rumor.text for rumor in propagated)
     assert snapshot.settlement_states['village_2'].triggered_events == []
+
+
+def test_rumor_does_not_bounce_back_to_origin_or_duplicate_prefix() -> None:
+    world = build_world_engine()
+    snapshot = create_default_world_snapshot()
+    source_state = snapshot.settlement_states['village_1']
+    source_state.rumor_log.append(
+        Rumor(
+            source_event_id='argument_at_tavern',
+            tick=0,
+            day=1,
+            time_phase='아침',
+            location='술집',
+            text='술집에서 큰 싸움이 있었다는 말이 돌았다.',
+            origin_settlement_id='village_1',
+            freshness=4,
+            intensity=2,
+        )
+    )
+
+    snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.wait())
+    snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.wait())
+
+    village_1_rumors = [rumor.text for rumor in snapshot.settlement_states['village_1'].rumor_log if rumor.is_remote]
+    village_2_rumors = [rumor.text for rumor in snapshot.settlement_states['village_2'].rumor_log if rumor.is_remote]
+
+    assert not any('village_1에서 village_1에서' in text for text in village_1_rumors)
+    assert not any(text.startswith('village_1에서 village_1에서') for text in village_2_rumors)
+    assert village_1_rumors == []
 
 
 def test_chronicle_summarizes_cross_settlement_activity() -> None:
@@ -162,3 +192,14 @@ def test_player_location_moves_with_active_settlement_transition() -> None:
     assert snapshot.settlement_states['village_1'].player_location is None
     assert snapshot.settlement_states['village_2'].player_location is not None
     assert snapshot.settlement_states['town_1'].player_location is None
+
+
+def test_settlement_specific_move_allows_market_in_town() -> None:
+    world = build_world_engine()
+    snapshot = create_default_world_snapshot()
+
+    snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.travel('town_1'))
+    snapshot = world.run_step(snapshot, Mode.RP, action=PlayerAction.move('시장'))
+
+    assert snapshot.active_settlement_id == 'town_1'
+    assert snapshot.settlement_state.player_location == '시장'

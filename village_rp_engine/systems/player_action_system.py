@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from village_rp_engine.config import PUBLIC_LOCATIONS
 from village_rp_engine.core.world_state import WorldState
 from village_rp_engine.models.player_action import PlayerAction
 
@@ -11,7 +10,7 @@ class PlayerActionSystem:
             state.world_log.append(f"플레이어 행동: 대기 ({state.player_location})")
             return
 
-        if action.action_type == "move" and action.target_location in PUBLIC_LOCATIONS:
+        if action.action_type == "move" and action.target_location:
             state.player_location = action.target_location
             state.world_log.append(f"플레이어 행동: 이동 -> {action.target_location}")
             return

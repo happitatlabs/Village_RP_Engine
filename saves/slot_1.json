@@ -1,0 +1,790 @@
+{
+  "slot": 1,
+  "saved_at": "2026-03-25T20:38:01",
+  "active_settlement_id": "village_1",
+  "day": 1,
+  "tick": 3,
+  "time_phase": "밤",
+  "player_location": "술집",
+  "world_save_data": {
+    "settlement_states": {
+      "village_1": {
+        "tick": 3,
+        "day": 1,
+        "time_phase": "밤",
+        "settlement_id": "village_1",
+        "security": 57,
+        "stress": 45,
+        "economy_profile": {
+          "grain": 86,
+          "iron": 10
+        },
+        "npc_locations": {
+          "blacksmith": "집",
+          "farmer": "집",
+          "innkeeper": "술집",
+          "village_elder": "집",
+          "guard_captain": "광장"
+        },
+        "previous_npc_locations": {
+          "blacksmith": "술집",
+          "farmer": "술집",
+          "innkeeper": "술집",
+          "village_elder": "술집",
+          "guard_captain": "술집"
+        },
+        "player_location": "술집",
+        "previous_player_location": "술집",
+        "triggered_events": [
+          {
+            "event_id": "late_night_cleanup",
+            "time_phase": "밤",
+            "location": "술집",
+            "actor_ids": [
+              "innkeeper"
+            ],
+            "outcome_text": "여관주인이 늦은 밤 술집을 정리했다.",
+            "rumor_text": "늦은 밤에도 여관주인이 술집을 정리했다는 말이 돌았다.",
+            "narration_text": "술집 안에서는 여관주인이 의자를 정리하며 하루를 마무리하고 있었다.",
+            "observer_narration_text": "술집에서는 여관주인이 의자를 정리하며 하루를 마무리하고 있었다.",
+            "rumor_base_score": 1,
+            "witnessed": true
+          }
+        ],
+        "visible_scenes": [
+          {
+            "source_event_id": "late_night_cleanup",
+            "tick": 3,
+            "location": "술집",
+            "text": "늦은 밤 술집 안은 한산했고, 여관주인은 남은 잔을 천천히 정리하고 있었다.",
+            "observer_text": "늦은 밤 술집에서 여관주인가 조용히 가게를 정리하고 있었다."
+          }
+        ],
+        "dialogues": [
+          {
+            "speaker_id": "innkeeper",
+            "speaker_name": "여관주인",
+            "text": "오늘도 겨우 끝났군.",
+            "source_type": "event"
+          }
+        ],
+        "rumor_log": [],
+        "world_log": [
+          "[Day 1][Tick 3] 시간대: 밤",
+          "플레이어 행동: 대기 (술집)",
+          "이동: 대장장이 -> 집",
+          "이동: 농부 -> 집",
+          "이동: 여관주인 -> 술집",
+          "이동: 촌장 -> 집",
+          "이동: 경비대장 -> 광장",
+          "이벤트 발생: 여관주인이 늦은 밤 술집을 정리했다.",
+          "플레이어 목격: late_night_cleanup",
+          "장면 생성: 늦은 밤 술집 안은 한산했고, 여관주인은 남은 잔을 천천히 정리하고 있었다.",
+          "현장 대화: 여관주인 -> 오늘도 겨우 끝났군."
+        ],
+        "relationships": [
+          {
+            "left": "blacksmith",
+            "right": "farmer",
+            "score": -1
+          },
+          {
+            "left": "farmer",
+            "right": "blacksmith",
+            "score": -1
+          },
+          {
+            "left": "farmer",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "guard_captain",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "farmer",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "guard_captain",
+            "score": 1
+          }
+        ],
+        "player_relationships": {
+          "farmer": 0,
+          "blacksmith": 0,
+          "innkeeper": 0,
+          "village_elder": 1,
+          "guard_captain": 0
+        },
+        "quest_status": {
+          "mediate_tavern_conflict": "active"
+        },
+        "quest_contacts": {
+          "mediate_tavern_conflict": []
+        },
+        "npc_recent_states": {
+          "farmer": [
+            {
+              "npc_id": "farmer",
+              "state_id": "complaining_about_blacksmith",
+              "source_event_id": "argument_at_tavern",
+              "expires_day": 2
+            }
+          ],
+          "blacksmith": [
+            {
+              "npc_id": "blacksmith",
+              "state_id": "irritated_with_farmer",
+              "source_event_id": "argument_at_tavern",
+              "expires_day": 2
+            }
+          ],
+          "village_elder": [
+            {
+              "npc_id": "village_elder",
+              "state_id": "concerned_about_tavern_argument",
+              "source_event_id": "argument_at_tavern",
+              "expires_day": 2
+            }
+          ]
+        },
+        "player_notices": [],
+        "locked_npc_ids_for_tick": [],
+        "event_last_trigger_tick": {
+          "argument_at_tavern": 2,
+          "late_night_cleanup": 3
+        },
+        "rumor_history_keys": [],
+        "recent_scene_event_ids": [
+          "late_night_cleanup"
+        ]
+      },
+      "village_2": {
+        "tick": 3,
+        "day": 1,
+        "time_phase": "밤",
+        "settlement_id": "village_2",
+        "security": 52,
+        "stress": 50,
+        "economy_profile": {
+          "grain": 116,
+          "iron": 4
+        },
+        "npc_locations": {
+          "farmer": "집",
+          "innkeeper": "술집",
+          "village_elder": "집",
+          "guard_captain": "광장"
+        },
+        "previous_npc_locations": {
+          "farmer": "술집",
+          "innkeeper": "술집",
+          "village_elder": "술집",
+          "guard_captain": "술집"
+        },
+        "player_location": null,
+        "previous_player_location": null,
+        "triggered_events": [],
+        "visible_scenes": [],
+        "dialogues": [],
+        "rumor_log": [],
+        "world_log": [
+          "[Day 1][Tick 3] 시간대: 밤",
+          "unvisited settlement update",
+          "unvisited settlement update: numeric only"
+        ],
+        "relationships": [
+          {
+            "left": "farmer",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "guard_captain",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "farmer",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "guard_captain",
+            "score": 1
+          }
+        ],
+        "player_relationships": {
+          "farmer": 0,
+          "blacksmith": 0,
+          "innkeeper": 0,
+          "village_elder": 0,
+          "guard_captain": 0
+        },
+        "quest_status": {
+          "mediate_tavern_conflict": "not_started"
+        },
+        "quest_contacts": {
+          "mediate_tavern_conflict": []
+        },
+        "npc_recent_states": {},
+        "player_notices": [],
+        "locked_npc_ids_for_tick": [],
+        "event_last_trigger_tick": {},
+        "rumor_history_keys": [],
+        "recent_scene_event_ids": []
+      },
+      "town_1": {
+        "tick": 3,
+        "day": 1,
+        "time_phase": "밤",
+        "settlement_id": "town_1",
+        "security": 69,
+        "stress": 35,
+        "economy_profile": {
+          "grain": 60,
+          "iron": 58,
+          "trade": 46
+        },
+        "npc_locations": {
+          "blacksmith": "집",
+          "innkeeper": "술집",
+          "village_elder": "집",
+          "guard_captain": "광장"
+        },
+        "previous_npc_locations": {
+          "blacksmith": "시장",
+          "innkeeper": "술집",
+          "village_elder": "술집",
+          "guard_captain": "술집"
+        },
+        "player_location": null,
+        "previous_player_location": null,
+        "triggered_events": [],
+        "visible_scenes": [],
+        "dialogues": [],
+        "rumor_log": [],
+        "world_log": [
+          "[Day 1][Tick 3] 시간대: 밤",
+          "unvisited settlement update",
+          "unvisited settlement update: numeric only"
+        ],
+        "relationships": [
+          {
+            "left": "farmer",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "guard_captain",
+            "right": "village_elder",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "farmer",
+            "score": 1
+          },
+          {
+            "left": "village_elder",
+            "right": "guard_captain",
+            "score": 1
+          }
+        ],
+        "player_relationships": {
+          "farmer": 0,
+          "blacksmith": 0,
+          "innkeeper": 0,
+          "village_elder": 0,
+          "guard_captain": 0
+        },
+        "quest_status": {
+          "mediate_tavern_conflict": "not_started"
+        },
+        "quest_contacts": {
+          "mediate_tavern_conflict": []
+        },
+        "npc_recent_states": {},
+        "player_notices": [],
+        "locked_npc_ids_for_tick": [],
+        "event_last_trigger_tick": {},
+        "rumor_history_keys": [],
+        "recent_scene_event_ids": []
+      }
+    },
+    "region_states": {
+      "north_fields": {
+        "region_id": "north_fields",
+        "security_risk": 21,
+        "trade_flow": 0,
+        "rumor_density": 2,
+        "stress_modifier": 18,
+        "economy_modifier": {
+          "grain": 2
+        }
+      },
+      "river_trade": {
+        "region_id": "river_trade",
+        "security_risk": 17,
+        "trade_flow": 0,
+        "rumor_density": 3,
+        "stress_modifier": 11,
+        "economy_modifier": {
+          "trade": 2,
+          "iron": 1
+        }
+      }
+    },
+    "continent_states": {
+      "continent_1": {
+        "continent_id": "continent_1",
+        "global_tension": 11,
+        "trade_pressure": 12,
+        "migration_pressure": 10,
+        "rumor_noise": 12,
+        "stability": 0
+      }
+    },
+    "active_settlement_id": "village_1",
+    "recently_visited_ids": [],
+    "pending_influences": [],
+    "propagated_rumor_keys": [],
+    "chronicle_archive_entries": [
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_1",
+        "day": 1,
+        "tick": 0,
+        "text": "village_1: security 60, stress 20, economy grain=80, iron=10",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_2",
+        "day": 1,
+        "tick": 0,
+        "text": "village_2: security 55, stress 25, economy grain=110, iron=4",
+        "settlement_id": "village_2",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "town_1",
+        "day": 1,
+        "tick": 0,
+        "text": "town_1: security 72, stress 18, economy grain=60, iron=55, trade=40",
+        "settlement_id": "town_1",
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "north_fields",
+        "day": 1,
+        "tick": 0,
+        "text": "north_fields: regional pressure steady",
+        "settlement_id": null,
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "river_trade",
+        "day": 1,
+        "tick": 0,
+        "text": "river_trade: rumor traffic increased",
+        "settlement_id": null,
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "continent_summary",
+        "source_id": "continent_1",
+        "day": 1,
+        "tick": 0,
+        "text": "continent_1: regional instability rising",
+        "settlement_id": null,
+        "region_id": null,
+        "continent_id": "continent_1",
+        "layer": "continent",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "north_fields",
+        "day": 1,
+        "tick": 0,
+        "text": "north_fields: local tension increased",
+        "settlement_id": null,
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_1",
+        "day": 1,
+        "tick": 1,
+        "text": "village_1: security 59, stress 23, economy grain=82, iron=10",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_2",
+        "day": 1,
+        "tick": 1,
+        "text": "village_2: security 54, stress 28, economy grain=112, iron=4",
+        "settlement_id": "village_2",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "town_1",
+        "day": 1,
+        "tick": 1,
+        "text": "town_1: security 71, stress 20, economy grain=60, iron=56, trade=42",
+        "settlement_id": "town_1",
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "north_fields",
+        "day": 1,
+        "tick": 1,
+        "text": "north_fields: local tension increased",
+        "settlement_id": null,
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "river_trade",
+        "day": 1,
+        "tick": 1,
+        "text": "river_trade: local tension increased",
+        "settlement_id": null,
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "continent_summary",
+        "source_id": "continent_1",
+        "day": 1,
+        "tick": 1,
+        "text": "continent_1: regional instability rising",
+        "settlement_id": null,
+        "region_id": null,
+        "continent_id": "continent_1",
+        "layer": "continent",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "event",
+        "source_id": "argument_at_tavern",
+        "day": 1,
+        "tick": 2,
+        "text": "대장장이와 농부가 술집에서 말다툼을 벌였다.",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "EVENT",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 2,
+        "text": "이벤트 발생: 대장장이와 농부가 술집에서 말다툼을 벌였다.",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 2,
+        "text": "상태 부여: farmer -> complaining_about_blacksmith (expires_day=2)",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 2,
+        "text": "상태 부여: blacksmith -> irritated_with_farmer (expires_day=2)",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 2,
+        "text": "상태 부여: village_elder -> concerned_about_tavern_argument (expires_day=2)",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_1",
+        "day": 1,
+        "tick": 2,
+        "text": "village_1: security 58, stress 29, economy grain=84, iron=10",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_2",
+        "day": 1,
+        "tick": 2,
+        "text": "village_2: security 53, stress 34, economy grain=114, iron=4",
+        "settlement_id": "village_2",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "town_1",
+        "day": 1,
+        "tick": 2,
+        "text": "town_1: security 70, stress 25, economy grain=60, iron=57, trade=44",
+        "settlement_id": "town_1",
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "north_fields",
+        "day": 1,
+        "tick": 2,
+        "text": "north_fields: local tension increased",
+        "settlement_id": null,
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "river_trade",
+        "day": 1,
+        "tick": 2,
+        "text": "river_trade: local tension increased",
+        "settlement_id": null,
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "continent_summary",
+        "source_id": "continent_1",
+        "day": 1,
+        "tick": 2,
+        "text": "continent_1: regional instability rising",
+        "settlement_id": null,
+        "region_id": null,
+        "continent_id": "continent_1",
+        "layer": "continent",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 2,
+        "text": "퀘스트 시작: mediate_tavern_conflict",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "event",
+        "source_id": "late_night_cleanup",
+        "day": 1,
+        "tick": 3,
+        "text": "여관주인이 늦은 밤 술집을 정리했다.",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "EVENT",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "world_log",
+        "source_id": null,
+        "day": 1,
+        "tick": 3,
+        "text": "이벤트 발생: 여관주인이 늦은 밤 술집을 정리했다.",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_1",
+        "day": 1,
+        "tick": 3,
+        "text": "village_1: security 57, stress 45, economy grain=86, iron=10",
+        "settlement_id": "village_1",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": true
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "village_2",
+        "day": 1,
+        "tick": 3,
+        "text": "village_2: security 52, stress 50, economy grain=116, iron=4",
+        "settlement_id": "village_2",
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "settlement_state",
+        "source_id": "town_1",
+        "day": 1,
+        "tick": 3,
+        "text": "town_1: security 69, stress 35, economy grain=60, iron=58, trade=46",
+        "settlement_id": "town_1",
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "settlement",
+        "category": "STATE_CHANGE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "north_fields",
+        "day": 1,
+        "tick": 3,
+        "text": "north_fields: local tension increased",
+        "settlement_id": null,
+        "region_id": "north_fields",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "region_summary",
+        "source_id": "river_trade",
+        "day": 1,
+        "tick": 3,
+        "text": "river_trade: local tension increased",
+        "settlement_id": null,
+        "region_id": "river_trade",
+        "continent_id": "continent_1",
+        "layer": "region",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      },
+      {
+        "entry_type": "continent_summary",
+        "source_id": "continent_1",
+        "day": 1,
+        "tick": 3,
+        "text": "continent_1: regional instability rising",
+        "settlement_id": null,
+        "region_id": null,
+        "continent_id": "continent_1",
+        "layer": "continent",
+        "category": "INFLUENCE",
+        "observed_directly": false
+      }
+    ]
+  }
+}

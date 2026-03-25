@@ -35,6 +35,12 @@ class InfluencePacket:
     security_delta: int = 0
     stress_delta: int = 0
     rumor_tags: tuple[str, ...] = ()
+    scope: str = 'settlement'
+    delay_ticks: int = 0
+    chronicle_reference: str | None = None
+    choice_id: str | None = None
+    player_driven: bool = False
+    special_npc_signal: int = 0
 
 
 @dataclass(frozen=True)
@@ -245,12 +251,42 @@ class PlayerHistoryEntry:
 
 
 @dataclass(frozen=True)
+class InteractionRuntimeState:
+    choice_counts: dict[str, int] = field(default_factory=dict)
+    last_choice_id: str | None = None
+    last_choice_tick: int = 0
+
+
+@dataclass(frozen=True)
+class SpecialNPCState:
+    npc_id: str
+    status: str = 'DORMANT'
+    linked_settlement_id: str | None = None
+    signal_count: int = 0
+    last_signal_tick: int = 0
+
+
+@dataclass(frozen=True)
 class WorldSummarySnapshot:
     day: int
     tick: int
     settlement_summaries: tuple[str, ...] = ()
     region_summaries: tuple[str, ...] = ()
     continent_summaries: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class WorldSaveData:
+    settlement_states: dict[str, dict]
+    region_states: dict[str, dict]
+    continent_states: dict[str, dict]
+    active_settlement_id: str
+    recently_visited_ids: tuple[str, ...] = ()
+    pending_influences: tuple[dict, ...] = ()
+    propagated_rumor_keys: tuple[str, ...] = ()
+    chronicle_archive_entries: tuple[dict, ...] = ()
+    interaction_runtime_state: dict = field(default_factory=dict)
+    special_npc_states: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -303,6 +339,8 @@ class WorldSnapshot:
     continent_definitions: dict[str, ContinentDefinition] = field(default_factory=dict)
     continent_states: dict[str, ContinentRuntimeState] = field(default_factory=dict)
     chronicle_archive: ChronicleArchive = field(default_factory=ChronicleArchive)
+    interaction_runtime_state: InteractionRuntimeState = field(default_factory=InteractionRuntimeState)
+    special_npc_states: dict[str, SpecialNPCState] = field(default_factory=dict)
 
     @property
     def settlement_state(self) -> WorldState:

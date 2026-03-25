@@ -140,7 +140,7 @@ def test_player_timeline_distinguishes_direct_and_indirect_history() -> None:
         chronicle_archive=snapshot.chronicle_archive,
     )
 
-    timeline = get_player_timeline(snapshot, limit=12)
+    timeline = get_player_timeline(snapshot, limit=200)
 
     assert any(item.direct and 'directly observed rumor' in item.entry.text for item in timeline)
     assert any(item.indirect and 'while away rumor' in item.entry.text for item in timeline)

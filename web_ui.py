@@ -17,7 +17,15 @@ from village_rp_engine.logs.chronicle import (
     compare_settlements,
     get_player_timeline,
 )
-from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements
+from village_rp_engine.core.world_engine import (
+    build_world_snapshot,
+    can_travel_between_settlements,
+    get_player_interaction_choices,
+    list_recent_save_slots,
+    load_world_state_from_slot,
+    reset_world_to_seed,
+    save_world_state_to_slot,
+)
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import WorldSnapshot
 from village_rp_engine.models.player_action import PlayerAction
@@ -154,6 +162,10 @@ HTML_PAGE = r"""
         <div>현재 위치: <span id="playerLocation">광장</span></div>
         <div>Mode: <span>RP</span></div>
       </div>
+      <div class="section">
+        <h2>최근 저장 목록</h2>
+        <ul id="recentSaves"></ul>
+      </div>
     </div>
 
     <div class="grid">
@@ -195,6 +207,8 @@ HTML_PAGE = r"""
             <h3>대기</h3>
             <div class="button-row">
               <button data-action="wait">대기</button>
+              <button class="secondary" id="saveButton">저장</button>
+              <button class="secondary" id="loadButton">불러오기</button>
               <button class="secondary" id="resetButton">리셋</button>
             </div>
           </div>
@@ -210,6 +224,11 @@ HTML_PAGE = r"""
             <h3>대화 가능 인물</h3>
             <div class="button-row" id="talkButtons"></div>
             <div class="npc-list" id="presentNpcs"></div>
+          </div>
+          <div class="section">
+            <h3>선택</h3>
+            <div class="button-row" id="choiceButtons"></div>
+            <div class="npc-list" id="specialNpcState"></div>
           </div>
           <div class="error" id="errorText"></div>
           <div class="hint">ACTIVE settlement만 장면과 대화를 렌더링하고, 다른 settlement는 경량 업데이트만 수행한다.</div>
@@ -241,7 +260,9 @@ HTML_PAGE = r"""
     const moveButtons = document.getElementById('moveButtons');
     const travelButtons = document.getElementById('travelButtons');
     const talkButtons = document.getElementById('talkButtons');
+    const choiceButtons = document.getElementById('choiceButtons');
     const presentNpcs = document.getElementById('presentNpcs');
+    const specialNpcState = document.getElementById('specialNpcState');
     const errorText = document.getElementById('errorText');
 
     function renderList(id, items, formatter) {
@@ -272,6 +293,7 @@ HTML_PAGE = r"""
       renderList('quests', data.quests);
       renderList('playerRelationships', data.player_relationships);
       renderList('relationships', data.relationships);
+      renderList('recentSaves', data.recent_saves, (item) => `슬롯 ${item.slot} | Day ${item.day} Tick ${item.tick} | ${item.active_settlement_id} | ${item.saved_at}`);
 
       document.getElementById('worldLog').textContent = data.world_log.join('\n');
       document.getElementById('rumorLog').textContent = data.rumor_lines.join('\n') || '없음';
@@ -282,7 +304,7 @@ HTML_PAGE = r"""
       for (const settlementId of data.available_settlements) {
         const button = document.createElement('button');
         button.textContent = settlementId;
-        button.onclick = () => performAction({ action_type: 'travel', target_settlement_id: settlementId });
+        button.onclick = () => performAction({ action_type: 'travel', target_settlement_id: settlementId, travel_mode: 'walk' });
         travelButtons.appendChild(button);
       }
 
@@ -295,7 +317,21 @@ HTML_PAGE = r"""
       }
 
       talkButtons.innerHTML = '';
+      choiceButtons.innerHTML = '';
       presentNpcs.innerHTML = '';
+      specialNpcState.innerHTML = '';
+      for (const choice of data.interaction_choices) {
+        const button = document.createElement('button');
+        button.textContent = choice.label;
+        button.onclick = () => performAction({ action_type: 'choose', choice_id: choice.choice_id });
+        choiceButtons.appendChild(button);
+      }
+      for (const line of data.special_npc_state_lines) {
+        const item = document.createElement('div');
+        item.textContent = line;
+        specialNpcState.appendChild(item);
+      }
+
       if (data.present_npcs.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'empty';
@@ -337,6 +373,42 @@ HTML_PAGE = r"""
     }
 
     document.querySelector('[data-action="wait"]').onclick = () => performAction({ action_type: 'wait' });
+    document.getElementById('saveButton').onclick = async () => {
+      const rawSlot = window.prompt('저장 슬롯을 입력하세요. (1-3)', '1');
+      if (!rawSlot) {
+        return;
+      }
+      const slot = Number(rawSlot);
+      const response = await fetch('/api/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        errorText.textContent = data.error || '저장 중 오류가 발생했다.';
+        return;
+      }
+      renderState(data);
+    };
+    document.getElementById('loadButton').onclick = async () => {
+      const rawSlot = window.prompt('불러올 슬롯을 입력하세요. (1-3)', '1');
+      if (!rawSlot) {
+        return;
+      }
+      const slot = Number(rawSlot);
+      const response = await fetch('/api/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slot }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        errorText.textContent = data.error || '불러오기 중 오류가 발생했다.';
+        return;
+      }
+      renderState(data);
+    };
     document.getElementById('resetButton').onclick = async () => {
       errorText.textContent = '';
       const response = await fetch('/api/reset', { method: 'POST' });
@@ -359,8 +431,30 @@ class EngineSession:
 
     def reset(self) -> dict[str, Any]:
         with self._lock:
-            self.snapshot_state = create_default_world_snapshot()
+            self.snapshot_state = reset_world_to_seed(self.world_engine)
             return serialize_snapshot(self.snapshot_state)
+
+    def save(self, slot: int) -> tuple[int, dict[str, Any]]:
+        with self._lock:
+            try:
+                save_world_state_to_slot(self.snapshot_state, slot)
+            except Exception:
+                return HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'}
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
+
+    def load(self, slot: int) -> tuple[int, dict[str, Any]]:
+        with self._lock:
+            try:
+                self.snapshot_state = load_world_state_from_slot(
+                    slot,
+                    settlement_definitions=self.world_engine.settlement_definitions,
+                    settlement_links=self.world_engine.settlement_links,
+                    region_definitions=self.world_engine.region_definitions,
+                    continent_definitions=self.world_engine.continent_definitions,
+                )
+            except Exception:
+                return HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'}
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -378,6 +472,8 @@ class EngineSession:
                 return HTTPStatus.BAD_REQUEST, {'error': f'이미 {settlement_state.player_location}에 있다.'}
             if action.action_type == 'move' and action.target_location not in settlement_definition.locations:
                 return HTTPStatus.BAD_REQUEST, {'error': '이동할 수 없는 장소다.'}
+            if action.action_type == 'choose' and action.choice_id not in {choice['choice_id'] for choice in get_player_interaction_choices()}:
+                return HTTPStatus.BAD_REQUEST, {'error': '지원하지 않는 선택이다.'}
             if action.action_type == 'travel' and action.target_settlement_id == self.snapshot_state.active_settlement_id:
                 return HTTPStatus.BAD_REQUEST, {'error': '이미 그 정착지에 있다.'}
             if action.action_type == 'travel' and not can_travel_between_settlements(
@@ -412,6 +508,24 @@ class UIRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == '/api/reset':
             self._send_json(HTTPStatus.OK, self.session.reset())
+            return
+        if parsed.path == '/api/save':
+            payload = self._read_json()
+            slot = payload.get('slot') if payload is not None else None
+            if not isinstance(slot, int):
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'})
+                return
+            status, body = self.session.save(slot)
+            self._send_json(status, body)
+            return
+        if parsed.path == '/api/load':
+            payload = self._read_json()
+            slot = payload.get('slot') if payload is not None else None
+            if not isinstance(slot, int):
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'})
+                return
+            status, body = self.session.load(slot)
+            self._send_json(status, body)
             return
         if parsed.path == '/api/action':
             payload = self._read_json()
@@ -469,11 +583,19 @@ def build_action(payload: dict[str, Any]) -> PlayerAction:
         if not isinstance(target_npc_id, str):
             raise ValueError('대화할 수 없는 대상이다.')
         return PlayerAction.talk(target_npc_id)
+    if action_type == 'choose':
+        choice_id = payload.get('choice_id')
+        if not isinstance(choice_id, str):
+            raise ValueError('선택할 수 없는 행동이다.')
+        return PlayerAction.choose(choice_id)
     if action_type == 'travel':
         target_settlement_id = payload.get('target_settlement_id')
         if not isinstance(target_settlement_id, str):
             raise ValueError('이동할 수 없는 정착지다.')
-        return PlayerAction.travel(target_settlement_id)
+        travel_mode = payload.get('travel_mode', 'walk')
+        if not isinstance(travel_mode, str):
+            raise ValueError('이동할 수 없는 정착지다.')
+        return PlayerAction.travel(target_settlement_id, travel_mode=travel_mode)
     raise ValueError('지원하지 않는 행동이다.')
 
 
@@ -506,6 +628,12 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
     region_comparison_result = compare_regions(snapshot, region_ids[:2])
     continent_ids = list(snapshot.continent_definitions)
     continent_comparison_result = compare_continents(snapshot, continent_ids[:2] or continent_ids)
+    recent_saves = list_recent_save_slots()
+    interaction_choices = list(get_player_interaction_choices())
+    special_npc_state_lines = [
+        f"{npc_id}: {state.status} ({state.linked_settlement_id or 'unlinked'})"
+        for npc_id, state in sorted(snapshot.special_npc_states.items())
+    ]
     history_surface = {
         'recent': {
             'total_count': recent_result.total_count,
@@ -607,6 +735,9 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
         'chronicle_lines': chronicle_lines,
         'active_region_id': active_region_id,
         'active_continent_id': active_continent_id,
+        'recent_saves': recent_saves,
+        'interaction_choices': interaction_choices,
+        'special_npc_state_lines': special_npc_state_lines,
     }
 
 

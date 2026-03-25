@@ -52,6 +52,7 @@ WAIT_ALIASES = {'wait', '대기', ''}
 MOVE_PREFIXES = ('move ', '이동 ')
 TALK_PREFIXES = ('talk ', '대화 ')
 TRAVEL_PREFIXES = ('travel ', '여행 ')
+CHOICE_PREFIXES = ('choose ', '선택 ')
 MOVE_SUFFIX = '가기'
 MOVE_POSTFIX = '이동'
 TALK_SUFFIXES = ('말걸기', '대화')
@@ -104,6 +105,11 @@ def parse_player_input(raw: str) -> PlayerAction | None:
         if lowered.startswith(prefix):
             location = normalize_location_alias(normalized[len(prefix):])
             return PlayerAction.move(location) if location else None
+
+    for prefix in CHOICE_PREFIXES:
+        if lowered.startswith(prefix):
+            choice_id = _normalize_whitespace(normalized[len(prefix):]).lower().replace(' ', '_')
+            return PlayerAction.choose(choice_id) if choice_id else None
 
     if normalized.endswith(MOVE_SUFFIX):
         location = normalize_location_alias(normalized[:-len(MOVE_SUFFIX)])

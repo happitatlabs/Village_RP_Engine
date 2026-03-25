@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections import deque
 
 from village_rp_engine.core.mode_controller import build_engine, build_world_engine, create_default_state, create_default_world_snapshot
-from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements
+import village_rp_engine.core.world_engine as world_engine_module
+from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements, save_world_state_to_slot
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import SettlementLink
 from village_rp_engine.models.player_action import PlayerAction
@@ -94,3 +95,16 @@ def test_cli_and_web_ui_share_same_travel_legality_rule() -> None:
     assert web_payload['available_settlements'] == cli_travel_targets
     assert action == PlayerAction.travel('village_2')
     assert any('이동할 수 없는 정착지입니다.' in line for line in outputs)
+
+
+def test_web_ui_recent_save_list_is_exposed_at_top(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(world_engine_module, 'SAVE_DIR', tmp_path / 'saves')
+    snapshot = create_default_world_snapshot()
+    save_world_state_to_slot(snapshot, 3)
+
+    payload = serialize_snapshot(snapshot)
+
+    assert 'recent_saves' in payload
+    assert payload['recent_saves']
+    assert payload['recent_saves'][0]['slot'] == 3
+    assert 'id="recentSaves"' in HTML_PAGE

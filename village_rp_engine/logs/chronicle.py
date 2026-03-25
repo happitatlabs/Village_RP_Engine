@@ -26,6 +26,20 @@ from village_rp_engine.models.phase1_world import (
 SECURITY_PATTERN = re.compile(r'security (-?\d+)')
 STRESS_PATTERN = re.compile(r'stress (-?\d+)')
 ECONOMY_PATTERN = re.compile(r'economy (.+)$')
+PLAYER_CHOICE_PATTERN = re.compile(r'^상태 부여: 플레이어 선택 \[(?P<choice_id>[^\]]+)\] ')
+PLAYER_CONSEQUENCE_PATTERN = re.compile(r'^상태 부여: 선택의 여파 \[(?P<reference>[^\]]+)\] ')
+
+PLAYER_CHRONICLE_TRACE_TEXT = {
+    'support_guard': '경계 근처에 조용한 호의가 남았다.',
+    'ignore_murmurs': '흘려보낸 웅성거림이 오래 남았다.',
+    'follow_whisper': '잡히지 않던 기척이 골목 끝에 오래 남았다.',
+}
+
+PLAYER_CONSEQUENCE_TRACE_TEXT = {
+    'choice:support_guard': '경계 쪽의 공기가 조금 더 단단해졌다.',
+    'choice:ignore_murmurs': '근거 없는 수군거림이 한층 진해졌다.',
+    'choice:follow_whisper': '보이지 않던 발자국이 조금 더 가까워졌다.',
+}
 
 
 def _entry_sort_key(entry: ChronicleEntry) -> tuple[int, int, int, str, str]:
@@ -49,6 +63,20 @@ def _group_entries(entries: tuple[ChronicleEntry, ...], attribute: str) -> dict[
 
 def _economy_summary(economy_profile: dict[str, int | float]) -> str:
     return ', '.join(f'{key}={value}' for key, value in sorted(economy_profile.items())[:3])
+
+
+def _format_world_log_for_chronicle(line: str) -> str:
+    choice_match = PLAYER_CHOICE_PATTERN.match(line)
+    if choice_match is not None:
+        choice_id = choice_match.group('choice_id')
+        return PLAYER_CHRONICLE_TRACE_TEXT.get(choice_id, '작은 선택의 흔적이 남았다.')
+
+    consequence_match = PLAYER_CONSEQUENCE_PATTERN.match(line)
+    if consequence_match is not None:
+        reference = consequence_match.group('reference')
+        return PLAYER_CONSEQUENCE_TRACE_TEXT.get(reference, '보이지 않던 여파가 서서히 번졌다.')
+
+    return line
 
 
 def build_chronicle_entries(
@@ -101,7 +129,7 @@ def build_chronicle_entries(
                 source_id=None,
                 day=settlement_state.day,
                 tick=settlement_state.tick,
-                text=line,
+                text=_format_world_log_for_chronicle(line),
                 settlement_id=settlement_state.settlement_id,
                 region_id=region_id,
                 continent_id=continent_id,
