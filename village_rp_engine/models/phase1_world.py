@@ -122,6 +122,135 @@ class ChronicleEntry:
     tick: int
     text: str
     settlement_id: str | None = None
+    region_id: str | None = None
+    continent_id: str | None = None
+    layer: str = 'settlement'
+    category: str = 'STATE_CHANGE'
+    observed_directly: bool = False
+
+
+@dataclass(frozen=True)
+class ChronicleArchive:
+    entries: tuple[ChronicleEntry, ...] = ()
+
+    @staticmethod
+    def _entry_identity(entry: ChronicleEntry) -> tuple[object, ...]:
+        return (
+            entry.entry_type,
+            entry.source_id,
+            entry.day,
+            entry.tick,
+            entry.text,
+            entry.settlement_id,
+            entry.region_id,
+            entry.continent_id,
+            entry.layer,
+            entry.category,
+        )
+
+    def append_entries(self, new_entries: tuple[ChronicleEntry, ...] | list[ChronicleEntry]) -> 'ChronicleArchive':
+        seen_entries = {self._entry_identity(entry) for entry in self.entries}
+        combined_entries = list(self.entries)
+        for entry in new_entries:
+            identity = self._entry_identity(entry)
+            if identity in seen_entries:
+                continue
+            combined_entries.append(entry)
+            seen_entries.add(identity)
+        return ChronicleArchive(entries=tuple(combined_entries))
+
+
+@dataclass(frozen=True)
+class ChronicleView:
+    entries_by_time: tuple[ChronicleEntry, ...] = ()
+    entries_by_settlement: dict[str, tuple[ChronicleEntry, ...]] = field(default_factory=dict)
+    entries_by_region: dict[str, tuple[ChronicleEntry, ...]] = field(default_factory=dict)
+    entries_by_continent: dict[str, tuple[ChronicleEntry, ...]] = field(default_factory=dict)
+
+    def get_recent_entries(self, count: int) -> tuple[ChronicleEntry, ...]:
+        return self.entries_by_time[:count]
+
+    def get_entries_by_time_range(
+        self,
+        start: tuple[int, int],
+        end: tuple[int, int],
+    ) -> tuple[ChronicleEntry, ...]:
+        return tuple(
+            entry
+            for entry in self.entries_by_time
+            if start <= (entry.day, entry.tick) <= end
+        )
+
+    def get_settlement_history(self, settlement_id: str) -> tuple[ChronicleEntry, ...]:
+        return self.entries_by_settlement.get(settlement_id, ())
+
+    def get_region_history(self, region_id: str) -> tuple[ChronicleEntry, ...]:
+        return self.entries_by_region.get(region_id, ())
+
+    def get_continent_history(self, continent_id: str) -> tuple[ChronicleEntry, ...]:
+        return self.entries_by_continent.get(continent_id, ())
+
+    def get_player_recent_history(
+        self,
+        active_settlement_id: str,
+        recently_visited_ids: tuple[str, ...] = (),
+        limit: int = 10,
+    ) -> tuple[ChronicleEntry, ...]:
+        relevant_settlement_ids = {active_settlement_id, *recently_visited_ids}
+        return tuple(
+            entry
+            for entry in self.entries_by_time
+            if entry.layer in {'region', 'continent'} or entry.settlement_id in relevant_settlement_ids
+        )[:limit]
+
+
+@dataclass(frozen=True)
+class ChronicleQueryResult:
+    entries: tuple[ChronicleEntry, ...] = ()
+    total_count: int = 0
+    query_description: str = ''
+
+
+@dataclass(frozen=True)
+class ScopeDiffResult:
+    scope_type: str
+    scope_id: str
+    start: tuple[int, int]
+    end: tuple[int, int]
+    summary_lines: tuple[str, ...] = ()
+    entry_count: int = 0
+
+
+@dataclass(frozen=True)
+class ComparisonItem:
+    scope_id: str
+    recent_change_count: int
+    category_counts: tuple[tuple[str, int], ...] = ()
+    summary_lines: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ComparisonResult:
+    scope_type: str
+    items: tuple[ComparisonItem, ...] = ()
+    summary_lines: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PlayerHistoryEntry:
+    entry: ChronicleEntry
+    direct: bool
+    indirect: bool
+    perspective: str
+
+
+@dataclass(frozen=True)
+class WorldSummarySnapshot:
+    day: int
+    tick: int
+    settlement_summaries: tuple[str, ...] = ()
+    region_summaries: tuple[str, ...] = ()
+    continent_summaries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,6 +302,7 @@ class WorldSnapshot:
     region_states: dict[str, RegionRuntimeState] = field(default_factory=dict)
     continent_definitions: dict[str, ContinentDefinition] = field(default_factory=dict)
     continent_states: dict[str, ContinentRuntimeState] = field(default_factory=dict)
+    chronicle_archive: ChronicleArchive = field(default_factory=ChronicleArchive)
 
     @property
     def settlement_state(self) -> WorldState:

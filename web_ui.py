@@ -9,6 +9,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 from village_rp_engine.core.mode_controller import build_world_engine, create_default_world_snapshot, run_mode_step
+from village_rp_engine.logs.chronicle import (
+    build_chronicle_query,
+    build_world_summary_snapshot,
+    compare_continents,
+    compare_regions,
+    compare_settlements,
+    get_player_timeline,
+)
 from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import WorldSnapshot
@@ -473,11 +481,100 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
     settlement_state = snapshot.settlement_state
     settlement_definition = snapshot.settlement_definition
     presentation_state = snapshot.presentation_state
+    chronicle_query = build_chronicle_query(snapshot)
+    world_summary = build_world_summary_snapshot(snapshot)
+    player_timeline = get_player_timeline(snapshot, limit=4)
+    active_region_id = settlement_definition.region_id
+    active_region_definition = snapshot.region_definitions.get(active_region_id)
+    active_continent_id = active_region_definition.continent_id if active_region_definition is not None else None
     available_locations = [location for location in settlement_definition.locations if location != '집']
     available_settlements = [
         settlement_id
         for settlement_id in snapshot.settlement_definitions
         if can_travel_between_settlements(snapshot.active_settlement_id, settlement_id, snapshot.settlement_links)
+    ]
+    recent_result = chronicle_query.query_entries(limit=5)
+    settlement_result = chronicle_query.query_entries(settlement_id=snapshot.active_settlement_id, limit=4)
+    region_result = chronicle_query.query_entries(region_id=active_region_id, limit=4)
+    comparison_targets = [snapshot.active_settlement_id]
+    comparison_targets.extend(
+        settlement_id for settlement_id in snapshot.settlement_definitions
+        if settlement_id != snapshot.active_settlement_id
+    )
+    comparison_result = compare_settlements(snapshot, comparison_targets[:2])
+    region_ids = list(snapshot.region_definitions)
+    region_comparison_result = compare_regions(snapshot, region_ids[:2])
+    continent_ids = list(snapshot.continent_definitions)
+    continent_comparison_result = compare_continents(snapshot, continent_ids[:2] or continent_ids)
+    history_surface = {
+        'recent': {
+            'total_count': recent_result.total_count,
+            'entries': [
+                {'day': entry.day, 'tick': entry.tick, 'category': entry.category, 'text': entry.text}
+                for entry in recent_result.entries
+            ],
+        },
+        'settlement': {
+            'scope_id': snapshot.active_settlement_id,
+            'entries': [
+                {'day': entry.day, 'tick': entry.tick, 'category': entry.category, 'text': entry.text}
+                for entry in settlement_result.entries
+            ],
+        },
+        'region': {
+            'scope_id': active_region_id,
+            'entries': [
+                {'day': entry.day, 'tick': entry.tick, 'category': entry.category, 'text': entry.text}
+                for entry in region_result.entries
+            ],
+        },
+        'comparison': {
+            'scope_type': comparison_result.scope_type,
+            'summary_lines': list(comparison_result.summary_lines),
+        },
+        'region_comparison': {
+            'scope_type': region_comparison_result.scope_type,
+            'summary_lines': list(region_comparison_result.summary_lines),
+        },
+        'continent_comparison': {
+            'scope_type': continent_comparison_result.scope_type,
+            'summary_lines': list(continent_comparison_result.summary_lines),
+        },
+        'player_timeline': [
+            {
+                'day': item.entry.day,
+                'tick': item.entry.tick,
+                'text': item.entry.text,
+                'direct': item.direct,
+                'perspective': item.perspective,
+            }
+            for item in player_timeline
+        ],
+    }
+    chronicle_lines = [
+        '[Recent World Changes]',
+        *[f"Day {entry['day']} Tick {entry['tick']} | {entry['category']} | {entry['text']}" for entry in history_surface['recent']['entries']],
+        '',
+        '[Player Timeline]',
+        *[f"Day {entry['day']} Tick {entry['tick']} | {entry['perspective']} | {entry['text']}" for entry in history_surface['player_timeline']],
+        '',
+        '[Active Settlement History]',
+        *[f"Day {entry['day']} Tick {entry['tick']} | {entry['category']} | {entry['text']}" for entry in history_surface['settlement']['entries']],
+        '',
+        '[Region History]',
+        *([*world_summary.region_summaries[:2], *[f"Day {entry['day']} Tick {entry['tick']} | {entry['category']} | {entry['text']}" for entry in history_surface['region']['entries']]] or ['없음']),
+        '',
+        '[Settlement Comparison]',
+        *(history_surface['comparison']['summary_lines'] or ['없음']),
+        '',
+        '[Region Comparison]',
+        *(history_surface['region_comparison']['summary_lines'] or ['없음']),
+        '',
+        '[Continent Comparison]',
+        *(history_surface['continent_comparison']['summary_lines'] or ['없음']),
+        '',
+        '[Continent]',
+        *world_summary.continent_summaries[:2],
     ]
     return {
         'active_settlement_id': snapshot.active_settlement_id,
@@ -506,10 +603,10 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
         'relationships': list(presentation_state.relationship_lines),
         'world_log': list(presentation_state.world_log_lines),
         'npc_status_lines': list(presentation_state.npc_status_lines),
-        'chronicle_lines': [
-            f'{entry.settlement_id or snapshot.active_settlement_id}: {entry.text}'
-            for entry in presentation_state.chronicle_entries
-        ],
+        'history_surface': history_surface,
+        'chronicle_lines': chronicle_lines,
+        'active_region_id': active_region_id,
+        'active_continent_id': active_continent_id,
     }
 
 

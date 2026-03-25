@@ -13,10 +13,15 @@ from village_rp_engine.domain.settlement_data import (
     build_phase4_continent_states,
     get_phase2_npc_name_map,
 )
-from village_rp_engine.logs.chronicle import build_chronicle_entries, build_world_chronicle_entries
+from village_rp_engine.logs.chronicle import (
+    append_chronicle_entries,
+    build_world_chronicle_entries,
+    collect_world_chronicle_entries,
+)
 from village_rp_engine.logs.world_log import build_tick_header, format_relationship
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import (
+    ChronicleArchive,
     ContinentDefinition,
     ContinentRuntimeState,
     InfluencePacket,
@@ -261,6 +266,23 @@ def produce_region_influences(snapshot: WorldSnapshot) -> tuple[InfluencePacket,
     return tuple(packets)
 
 
+def _build_default_world_chronicle_entries_for_state(settlement_state: WorldState) -> list:
+    settlement_definitions = build_phase2_settlements()
+    region_definitions = build_phase3_regions()
+    continent = build_phase4_continent()
+    return build_world_chronicle_entries(
+        {settlement_state.settlement_id: settlement_state},
+        active_settlement_id=settlement_state.settlement_id,
+        settlement_definitions={
+            settlement_state.settlement_id: settlement_definitions[settlement_state.settlement_id]
+        } if settlement_state.settlement_id in settlement_definitions else {},
+        region_states=build_phase3_region_states(),
+        region_definitions=region_definitions,
+        continent_states=build_phase4_continent_states(),
+        continent_definitions={continent.continent_id: continent},
+    )
+
+
 def build_presentation_state(
     settlement_state: WorldState,
     chronicle_entries=None,
@@ -306,7 +328,7 @@ def build_presentation_state(
             for quest_id, status in sorted(settlement_state.quest_status.items())
         ),
         world_log_lines=tuple(settlement_state.world_log),
-        chronicle_entries=tuple(chronicle_entries or build_chronicle_entries(settlement_state)),
+        chronicle_entries=tuple(chronicle_entries or _build_default_world_chronicle_entries_for_state(settlement_state)),
         present_npcs=present_npcs,
         npc_status_lines=npc_status_lines,
     )
@@ -327,6 +349,7 @@ def build_world_snapshot(
     region_states: dict[str, RegionRuntimeState] | None = None,
     continent_definitions: dict[str, ContinentDefinition] | None = None,
     continent_states: dict[str, ContinentRuntimeState] | None = None,
+    chronicle_archive: ChronicleArchive | None = None,
 ) -> WorldSnapshot:
     single_settlement_mode = settlement_states is None and settlement_state is not None
     if settlement_states is None:
@@ -353,16 +376,28 @@ def build_world_snapshot(
         continent_states = build_phase4_continent_states()
     if active_settlement_id is None:
         active_settlement_id = next(iter(settlement_states))
+    current_entries = collect_world_chronicle_entries(
+        settlement_states,
+        active_settlement_id=active_settlement_id,
+        settlement_definitions=settlement_definitions,
+        region_states=region_states,
+        region_definitions=region_definitions,
+        continent_states=continent_states,
+        continent_definitions=continent_definitions,
+    )
+    archive = append_chronicle_entries(chronicle_archive or ChronicleArchive(), current_entries)
+    chronicle_entries = build_world_chronicle_entries(
+        settlement_states,
+        active_settlement_id=active_settlement_id,
+        settlement_definitions=settlement_definitions,
+        region_states=region_states,
+        region_definitions=region_definitions,
+        continent_states=continent_states,
+        continent_definitions=continent_definitions,
+        chronicle_archive=archive,
+    )
     if single_settlement_mode:
-        chronicle_entries = build_chronicle_entries(settlement_states[active_settlement_id])
         settlement_links = ()
-    else:
-        chronicle_entries = build_world_chronicle_entries(
-            settlement_states,
-            active_settlement_id=active_settlement_id,
-            region_states=region_states,
-            continent_states=continent_states,
-        )
     return WorldSnapshot(
         settlement_definitions=dict(settlement_definitions),
         settlement_states={settlement_id: clone_settlement_state(state) for settlement_id, state in settlement_states.items()},
@@ -377,6 +412,7 @@ def build_world_snapshot(
         region_states=dict(region_states),
         continent_definitions=dict(continent_definitions),
         continent_states=dict(continent_states),
+        chronicle_archive=archive,
     )
 
 
@@ -433,6 +469,7 @@ class Phase1WorldEngine:
             region_states=region_states_input,
             continent_definitions=continent_definitions,
             continent_states=continent_states,
+            chronicle_archive=snapshot.chronicle_archive,
         )
         continent_influences = produce_continent_influences(resolved_snapshot)
         region_states = refresh_region_states(region_definitions, region_states_input, states, continent_influences)
@@ -471,11 +508,25 @@ class Phase1WorldEngine:
             active_state = states[snapshot.active_settlement_id]
             active_state = self._run_active_step(self.get_settlement_engine(snapshot.active_settlement_id), active_state, mode, action)
             states[snapshot.active_settlement_id] = active_state
+            current_entries = collect_world_chronicle_entries(
+                states,
+                active_settlement_id=snapshot.active_settlement_id,
+                settlement_definitions=resolved_settlement_definitions,
+                region_states=region_states,
+                region_definitions=region_definitions,
+                continent_states=continent_states,
+                continent_definitions=continent_definitions,
+            )
+            archive = append_chronicle_entries(snapshot.chronicle_archive, current_entries)
             chronicle_entries = build_world_chronicle_entries(
                 states,
                 active_settlement_id=snapshot.active_settlement_id,
+                settlement_definitions=resolved_settlement_definitions,
                 region_states=region_states,
+                region_definitions=region_definitions,
                 continent_states=continent_states,
+                continent_definitions=continent_definitions,
+                chronicle_archive=archive,
             )
             return WorldSnapshot(
                 settlement_definitions=dict(self.settlement_definitions),
@@ -491,6 +542,7 @@ class Phase1WorldEngine:
                 region_states=region_states,
                 continent_definitions=continent_definitions,
                 continent_states=continent_states,
+                chronicle_archive=archive,
             )
 
         region_snapshot = build_world_snapshot(
@@ -504,6 +556,7 @@ class Phase1WorldEngine:
             region_states=region_states,
             continent_definitions=continent_definitions,
             continent_states=continent_states,
+            chronicle_archive=snapshot.chronicle_archive,
         )
         remaining_influences = tuple(snapshot.pending_influences) + produce_region_influences(region_snapshot)
         depth_map: dict[str, SimulationDepth] = {}
@@ -533,11 +586,25 @@ class Phase1WorldEngine:
             active_links,
         )
         active_state = states[next_active_settlement_id]
+        current_entries = collect_world_chronicle_entries(
+            states,
+            active_settlement_id=next_active_settlement_id,
+            settlement_definitions=resolved_settlement_definitions,
+            region_states=region_states,
+            region_definitions=region_definitions,
+            continent_states=continent_states,
+            continent_definitions=continent_definitions,
+        )
+        archive = append_chronicle_entries(snapshot.chronicle_archive, current_entries)
         chronicle_entries = build_world_chronicle_entries(
             states,
             active_settlement_id=next_active_settlement_id,
+            settlement_definitions=resolved_settlement_definitions,
             region_states=region_states,
+            region_definitions=region_definitions,
             continent_states=continent_states,
+            continent_definitions=continent_definitions,
+            chronicle_archive=archive,
         )
         return WorldSnapshot(
             settlement_definitions=dict(self.settlement_definitions),
@@ -553,6 +620,7 @@ class Phase1WorldEngine:
             region_states=region_states,
             continent_definitions=continent_definitions,
             continent_states=continent_states,
+            chronicle_archive=archive,
         )
 
     def _run_active_step(self, settlement_engine: TickEngine, settlement_state: WorldState, mode: Mode, action: PlayerAction | None) -> WorldState:
