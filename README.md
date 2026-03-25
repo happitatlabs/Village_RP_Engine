@@ -35,12 +35,35 @@
   - 최소 텍스트 웹 UI
   - 테스트 스위트
 
+## Continental Phase 1 구조
+
+현재 코드는 기존 Village 엔진을 유지한 채, Continental RP 구조의 Phase 1 single-settlement wrapper로 감싼 상태다.
+
+- `SettlementDefinition`
+  - Phase 1 단일 정착지의 canonical seed container
+- `WorldState`
+  - settlement-local runtime truth
+- `WorldSnapshot`
+  - `settlement_state` + 파생 `presentation_state` + depth/influence hook
+- `Phase1WorldEngine`
+  - 기존 settlement tick engine을 감싸는 world-level wrapper
+- `presentation_state`
+  - scene / dialogue / log / quest / favor를 settlement state에서 파생한 표시용 결과
+
+원칙:
+
+- Invisible World = State
+- Visible World = Scene
+- `presentation_state`는 source of truth가 아니다
+- scene / dialogue는 on-demand 생성이다
+
 ## 구현된 기능 목록
 
 현재 구현된 핵심 기능:
 
 - 시간대와 day가 순환하는 tick 기반 월드 엔진
 - RP mode / Observer mode 분리
+- Continental Phase 1 wrapper (`WorldSnapshot`, `Phase1WorldEngine`, depth / influence interface)
 - NPC 일정 기반 이동과 상태 기반 이동 override
 - 술집 말다툼과 후속 이벤트(`farmer_grumbling_square`)
 - rumor 생성, dedupe, hidden event rumor 처리
@@ -54,7 +77,15 @@
 
 ## 실행 방법
 
-### CLI 실행
+### 권장 실행 순서
+
+1. 테스트로 현재 상태 확인
+
+```powershell
+pytest -q
+```
+
+2. CLI에서 직접 플레이
 
 ```powershell
 python -m village_rp_engine.main --mode rp

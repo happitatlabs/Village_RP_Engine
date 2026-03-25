@@ -8,13 +8,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlparse
 
-from village_rp_engine.core.mode_controller import build_engine, create_default_state, run_mode_tick
+from village_rp_engine.core.mode_controller import build_world_engine, create_default_world_snapshot, run_mode_step
+from village_rp_engine.core.world_engine import build_world_snapshot
 from village_rp_engine.domain.location_data import build_locations
-from village_rp_engine.domain.npc_data import build_npcs
-from village_rp_engine.logs.world_log import format_relationship
+from village_rp_engine.domain.settlement_data import get_phase1_npc_name_map
 from village_rp_engine.models.mode import Mode
+from village_rp_engine.models.phase1_world import WorldSnapshot
 from village_rp_engine.models.player_action import PlayerAction
-from village_rp_engine.systems.relationship_system import RelationshipSystem
 
 
 HTML_PAGE = r"""
@@ -251,13 +251,13 @@ HTML_PAGE = r"""
       renderList('scenes', data.visible_scenes);
       renderList('dialogues', data.dialogues, (item) => `${item.speaker_name}: "${item.text}"`);
       renderList('events', data.triggered_events, (item) => item.outcome_text);
-      renderList('rumors', data.rumor_log, (item) => `Day ${item.day}: ${item.text}`);
+      renderList('rumors', data.rumor_lines);
       renderList('quests', data.quests);
       renderList('playerRelationships', data.player_relationships);
       renderList('relationships', data.relationships);
 
       document.getElementById('worldLog').textContent = data.world_log.join('\n');
-      document.getElementById('rumorLog').textContent = data.rumor_log.map((item) => `Day ${item.day} ${item.time_phase} | ${item.text}`).join('\n') || '없음';
+      document.getElementById('rumorLog').textContent = data.rumor_lines.join('\n') || '없음';
       document.getElementById('npcStateLog').textContent = data.npc_status_lines.join('\n');
 
       moveButtons.innerHTML = '';
@@ -325,44 +325,52 @@ HTML_PAGE = r"""
 """
 
 
-RELATIONSHIP_SYSTEM = RelationshipSystem()
-LOCATIONS = [location for location in build_locations() if location != "집"]
-NPCS = build_npcs()
-NPC_NAME_BY_ID = {npc.npc_id: npc.name for npc in NPCS}
+LOCATIONS = [location for location in build_locations() if location != '집']
+NPC_NAME_BY_ID = get_phase1_npc_name_map()
 
 
 class EngineSession:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.engine = build_engine()
-        self.state = create_default_state()
+        self.world_engine = build_world_engine()
+        self.snapshot_state = create_default_world_snapshot()
         self._prime_initial_state()
 
     def _prime_initial_state(self) -> None:
-        if not self.state.npc_locations:
-            self.state.npc_locations = self.engine.movement_system.resolve_locations_for_phase(self.state.time_phase)
-            self.state.previous_npc_locations = dict(self.state.npc_locations)
+        settlement_state = self.snapshot_state.settlement_state
+        if not settlement_state.npc_locations:
+            settlement_state.npc_locations = self.world_engine.settlement_engine.movement_system.resolve_locations_for_phase(
+                settlement_state.time_phase
+            )
+            settlement_state.previous_npc_locations = dict(settlement_state.npc_locations)
+            self.snapshot_state = build_world_snapshot(settlement_state, pending_influences=self.snapshot_state.pending_influences)
 
     def reset(self) -> dict[str, Any]:
         with self._lock:
-            self.state = create_default_state()
+            self.snapshot_state = create_default_world_snapshot()
             self._prime_initial_state()
-            return serialize_state(self.state)
+            return serialize_snapshot(self.snapshot_state)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return serialize_state(self.state)
+            return serialize_snapshot(self.snapshot_state)
 
     def apply_action(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         with self._lock:
             try:
                 action = build_action(payload)
             except ValueError as exc:
-                return HTTPStatus.BAD_REQUEST, {"error": str(exc)}
-            if action.action_type == "move" and action.target_location == self.state.player_location:
-                return HTTPStatus.BAD_REQUEST, {"error": f"이미 {self.state.player_location}에 있다."}
-            self.state = run_mode_tick(self.engine, self.state, Mode.RP, action_provider=lambda action=action: action)
-            return HTTPStatus.OK, serialize_state(self.state)
+                return HTTPStatus.BAD_REQUEST, {'error': str(exc)}
+            settlement_state = self.snapshot_state.settlement_state
+            if action.action_type == 'move' and action.target_location == settlement_state.player_location:
+                return HTTPStatus.BAD_REQUEST, {'error': f'이미 {settlement_state.player_location}에 있다.'}
+            self.snapshot_state = run_mode_step(
+                self.world_engine,
+                self.snapshot_state,
+                Mode.RP,
+                action_provider=lambda action=action: action,
+            )
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
 
 
 class UIRequestHandler(BaseHTTPRequestHandler):
@@ -370,139 +378,126 @@ class UIRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/":
+        if parsed.path == '/':
             self._send_html(HTML_PAGE)
             return
-        if parsed.path == "/api/state":
+        if parsed.path == '/api/state':
             self._send_json(HTTPStatus.OK, self.session.snapshot())
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+        self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found'})
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/reset":
+        if parsed.path == '/api/reset':
             self._send_json(HTTPStatus.OK, self.session.reset())
             return
-        if parsed.path == "/api/action":
+        if parsed.path == '/api/action':
             payload = self._read_json()
             if payload is None:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "잘못된 JSON 요청이다."})
+                self._send_json(HTTPStatus.BAD_REQUEST, {'error': '잘못된 JSON 요청이다.'})
                 return
             status, body = self.session.apply_action(payload)
             self._send_json(status, body)
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+        self._send_json(HTTPStatus.NOT_FOUND, {'error': 'Not found'})
 
     def log_message(self, format: str, *args: object) -> None:
         return
 
     def _read_json(self) -> dict[str, Any] | None:
         try:
-            content_length = int(self.headers.get("Content-Length", "0"))
+            content_length = int(self.headers.get('Content-Length', '0'))
         except ValueError:
             return None
         raw = self.rfile.read(content_length)
         try:
-            data = json.loads(raw.decode("utf-8"))
+            data = json.loads(raw.decode('utf-8'))
         except json.JSONDecodeError:
             return None
         return data if isinstance(data, dict) else None
 
     def _send_html(self, html: str) -> None:
-        encoded = html.encode("utf-8")
+        encoded = html.encode('utf-8')
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.send_header('Content-Length', str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
 
 
 def build_action(payload: dict[str, Any]) -> PlayerAction:
-    action_type = payload.get("action_type")
-    if action_type == "wait":
+    action_type = payload.get('action_type')
+    if action_type == 'wait':
         return PlayerAction.wait()
-    if action_type == "move":
-        target_location = payload.get("target_location")
+    if action_type == 'move':
+        target_location = payload.get('target_location')
         if not isinstance(target_location, str) or target_location not in LOCATIONS:
-            raise ValueError("이동할 수 없는 장소다.")
+            raise ValueError('이동할 수 없는 장소다.')
         return PlayerAction.move(target_location)
-    if action_type == "talk":
-        target_npc_id = payload.get("target_npc_id")
+    if action_type == 'talk':
+        target_npc_id = payload.get('target_npc_id')
         if not isinstance(target_npc_id, str) or target_npc_id not in NPC_NAME_BY_ID:
-            raise ValueError("대화할 수 없는 대상이다.")
+            raise ValueError('대화할 수 없는 대상이다.')
         return PlayerAction.talk(target_npc_id)
-    raise ValueError("지원하지 않는 행동이다.")
+    raise ValueError('지원하지 않는 행동이다.')
 
 
-def serialize_state(state) -> dict[str, Any]:
-    present_npcs = [
-        {"npc_id": npc_id, "name": NPC_NAME_BY_ID[npc_id]}
-        for npc_id, location in sorted(state.npc_locations.items())
-        if location == state.player_location
-    ]
-    npc_status_lines = []
-    for npc_id, location in sorted(state.npc_locations.items()):
-        state_ids = [recent_state.state_id for recent_state in state.npc_recent_states.get(npc_id, [])]
-        status_text = ", ".join(state_ids) if state_ids else "없음"
-        npc_status_lines.append(f"{NPC_NAME_BY_ID.get(npc_id, npc_id)} ({npc_id}) @ {location} | recent_state: {status_text}")
-
+def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
+    settlement_state = snapshot.settlement_state
+    presentation_state = snapshot.presentation_state
     return {
-        "day": state.day,
-        "tick": state.tick,
-        "time_phase": state.time_phase,
-        "player_location": state.player_location,
-        "available_locations": LOCATIONS,
-        "present_npcs": present_npcs,
-        "visible_scenes": [scene.text for scene in state.visible_scenes],
-        "dialogues": [
-            {"speaker_id": dialogue.speaker_id, "speaker_name": dialogue.speaker_name, "text": dialogue.text}
-            for dialogue in state.dialogues
+        'day': settlement_state.day,
+        'tick': settlement_state.tick,
+        'time_phase': settlement_state.time_phase,
+        'player_location': settlement_state.player_location,
+        'available_locations': LOCATIONS,
+        'present_npcs': [
+            {'npc_id': npc.npc_id, 'name': npc.name}
+            for npc in presentation_state.present_npcs
         ],
-        "triggered_events": [
-            {"event_id": event.event_id, "outcome_text": event.outcome_text}
-            for event in state.triggered_events
+        'visible_scenes': list(presentation_state.visible_scenes),
+        'dialogues': [
+            {'speaker_id': dialogue.speaker_id, 'speaker_name': dialogue.speaker_name, 'text': dialogue.text}
+            for dialogue in presentation_state.dialogues
         ],
-        "rumor_log": [
-            {"day": rumor.day, "time_phase": rumor.time_phase, "text": rumor.text}
-            for rumor in state.rumor_log[-5:]
+        'triggered_events': [
+            {'event_id': event.event_id, 'outcome_text': event.outcome_text}
+            for event in presentation_state.triggered_event_summaries
         ],
-        "quests": [
-            f"mediate_tavern_conflict: {state.quest_status.get('mediate_tavern_conflict', 'not_started')}"
-        ],
-        "player_relationships": [
-            f"{npc_id}: {score:+d}"
-            for npc_id, score in sorted(state.player_relationships.items())
-        ],
-        "relationships": [
-            format_relationship(relationship)
-            for relationship in RELATIONSHIP_SYSTEM.list_relationships(state)
-        ],
-        "world_log": state.world_log,
-        "npc_status_lines": npc_status_lines,
+        'rumor_lines': list(presentation_state.rumor_lines),
+        'quests': list(presentation_state.quest_lines),
+        'player_relationships': list(presentation_state.player_relationship_lines),
+        'relationships': list(presentation_state.relationship_lines),
+        'world_log': list(presentation_state.world_log_lines),
+        'npc_status_lines': list(presentation_state.npc_status_lines),
     }
 
 
+def serialize_state(state) -> dict[str, Any]:
+    return serialize_snapshot(build_world_snapshot(state))
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Village RP Engine minimal web UI")
-    parser.add_argument("--host", default="127.0.0.1", help="바인드할 호스트")
-    parser.add_argument("--port", type=int, default=8000, help="바인드할 포트")
+    parser = argparse.ArgumentParser(description='Village RP Engine minimal web UI')
+    parser.add_argument('--host', default='127.0.0.1', help='바인드할 호스트')
+    parser.add_argument('--port', type=int, default=8000, help='바인드할 포트')
     return parser.parse_args()
 
 
-def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
+def run_server(host: str = '127.0.0.1', port: int = 8000) -> None:
     server = ThreadingHTTPServer((host, port), UIRequestHandler)
-    print(f"Village RP Engine MVP UI running at http://{host}:{port}")
+    print(f'Village RP Engine MVP UI running at http://{host}:{port}')
     server.serve_forever()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args = parse_args()
     run_server(host=args.host, port=args.port)
