@@ -7,7 +7,12 @@ from village_rp_engine.config import DEFAULT_PLAYER_LOCATION, DEFAULT_RANDOM_SEE
 from village_rp_engine.core.tick_engine import TickEngine
 from village_rp_engine.core.world_engine import Phase1WorldEngine, build_world_snapshot
 from village_rp_engine.core.world_state import WorldState, create_initial_world_state
-from village_rp_engine.domain.settlement_data import build_npcs_for_settlement, build_phase1_settlement
+from village_rp_engine.domain.settlement_data import (
+    build_npcs_for_settlement,
+    build_phase1_settlement,
+    build_phase2_settlement_links,
+    build_phase2_settlements,
+)
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import SettlementDefinition, WorldSnapshot
 from village_rp_engine.models.player_action import PlayerAction
@@ -32,18 +37,60 @@ def build_tick_engine_from_settlement(settlement: SettlementDefinition) -> TickE
 
 
 def build_world_engine() -> Phase1WorldEngine:
-    return Phase1WorldEngine(build_engine())
+    settlements = build_phase2_settlements()
+    settlement_engines = {
+        settlement_id: build_tick_engine_from_settlement(settlement)
+        for settlement_id, settlement in settlements.items()
+    }
+    return Phase1WorldEngine(
+        settlement_definitions=settlements,
+        settlement_engines=settlement_engines,
+        settlement_links=build_phase2_settlement_links(),
+    )
+
+
+def create_state_from_settlement(
+    settlement: SettlementDefinition,
+    player_location: str | None = DEFAULT_PLAYER_LOCATION,
+) -> WorldState:
+    state = create_initial_world_state(player_location=player_location)
+    state.settlement_id = settlement.settlement_id
+    state.security = settlement.security.base_value
+    state.stress = settlement.stress_default
+    state.economy_profile = dict(settlement.economy_profile.values)
+    state.npc_locations = {
+        npc_id: schedule[state.time_phase]
+        for npc_id, schedule in settlement.schedules.items()
+    }
+    state.previous_npc_locations = dict(state.npc_locations)
+    PLAYER_PROGRESS_SYSTEM.ensure_initialized(state)
+    state.quest_status.setdefault(MEDIATE_TAVERN_CONFLICT_QUEST_ID, 'not_started')
+    return state
 
 
 def create_default_state() -> WorldState:
-    state = create_initial_world_state(player_location=DEFAULT_PLAYER_LOCATION)
+    state = create_state_from_settlement(build_phase1_settlement(), player_location=DEFAULT_PLAYER_LOCATION)
     PLAYER_PROGRESS_SYSTEM.ensure_initialized(state)
     state.quest_status.setdefault(MEDIATE_TAVERN_CONFLICT_QUEST_ID, 'not_started')
     return state
 
 
 def create_default_world_snapshot() -> WorldSnapshot:
-    return build_world_snapshot(create_default_state())
+    settlements = build_phase2_settlements()
+    states = {
+        settlement_id: create_state_from_settlement(
+            settlement,
+            player_location=DEFAULT_PLAYER_LOCATION if settlement_id == 'village_1' else None,
+        )
+        for settlement_id, settlement in settlements.items()
+    }
+    return build_world_snapshot(
+        settlement_definitions=settlements,
+        settlement_states=states,
+        active_settlement_id='village_1',
+        recently_visited_ids=(),
+        settlement_links=build_phase2_settlement_links(),
+    )
 
 
 def run_mode_tick(

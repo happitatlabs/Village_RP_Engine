@@ -22,6 +22,10 @@ class EconomyProfile:
 class SecurityState:
     value: int
 
+    @property
+    def base_value(self) -> int:
+        return self.value
+
 
 @dataclass(frozen=True)
 class InfluencePacket:
@@ -43,6 +47,7 @@ class SettlementDefinition:
     economy_profile: EconomyProfile
     security: SecurityState
     stress_default: int
+    rumor_tone: str = 'neutral'
 
 
 @dataclass(frozen=True)
@@ -54,12 +59,23 @@ class SettlementRuntimeState:
 
 
 @dataclass(frozen=True)
+class SettlementLink:
+    from_settlement_id: str
+    to_settlement_id: str
+    link_type: str
+    distance: int
+    rumor_speed: int
+    travel_cost: int
+
+
+@dataclass(frozen=True)
 class ChronicleEntry:
     entry_type: str
     source_id: str | None
     day: int
     tick: int
     text: str
+    settlement_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -98,10 +114,23 @@ class PresentationState:
 
 @dataclass(frozen=True)
 class WorldSnapshot:
-    settlement_state: WorldState
+    settlement_definitions: dict[str, SettlementDefinition]
+    settlement_states: dict[str, WorldState]
+    active_settlement_id: str
+    recently_visited_ids: tuple[str, ...]
     presentation_state: PresentationState
     simulation_depth: SimulationDepth
     pending_influences: tuple[InfluencePacket, ...] = ()
+    settlement_links: tuple[SettlementLink, ...] = ()
+    propagated_rumor_keys: tuple[str, ...] = ()
+
+    @property
+    def settlement_state(self) -> WorldState:
+        return self.settlement_states[self.active_settlement_id]
+
+    @property
+    def settlement_definition(self) -> SettlementDefinition:
+        return self.settlement_definitions[self.active_settlement_id]
 
 
 SettlementState = WorldState

@@ -55,8 +55,8 @@ class WorldState:
     economy_profile: dict[str, int | float] = field(default_factory=build_default_economy_profile)
     npc_locations: dict[str, str] = field(default_factory=dict)
     previous_npc_locations: dict[str, str] = field(default_factory=dict)
-    player_location: str = DEFAULT_PLAYER_LOCATION
-    previous_player_location: str = DEFAULT_PLAYER_LOCATION
+    player_location: str | None = DEFAULT_PLAYER_LOCATION
+    previous_player_location: str | None = DEFAULT_PLAYER_LOCATION
     triggered_events: list[TriggeredEvent] = field(default_factory=list)
     visible_scenes: list[Scene] = field(default_factory=list)
     dialogues: list[Dialogue] = field(default_factory=list)
@@ -74,7 +74,7 @@ class WorldState:
     recent_scene_event_ids: set[str] = field(default_factory=set)
 
 
-def create_initial_world_state(player_location: str = DEFAULT_PLAYER_LOCATION) -> WorldState:
+def create_initial_world_state(player_location: str | None = DEFAULT_PLAYER_LOCATION) -> WorldState:
     return WorldState(
         tick=0,
         day=1,

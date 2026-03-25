@@ -150,9 +150,11 @@ def test_world_engine_run_step_resolves_depth_via_policy_function(monkeypatch) -
         recently_visited_ids={'village_2'},
     )
 
-    assert calls == [('village_1', 'village_2', {'village_2'})]
+    assert ('village_2', 'village_2', {'village_2'}) in calls
+    assert any(call[1] == 'village_1' for call in calls)
     assert next_snapshot.simulation_depth == SimulationDepth.RECENT
-    assert next_snapshot.settlement_state.tick == snapshot.settlement_state.tick
+    assert next_snapshot.active_settlement_id == 'village_2'
+    assert next_snapshot.settlement_state.tick == snapshot.settlement_state.tick + 1
 
 
 def test_no_raw_seed_builder_usage_in_world_main_webui() -> None:

@@ -11,3 +11,7 @@ class Rumor:
     time_phase: str
     location: str
     text: str
+    origin_settlement_id: str | None = None
+    freshness: int = 3
+    intensity: int = 1
+    is_remote: bool = False

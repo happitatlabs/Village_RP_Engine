@@ -9,9 +9,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from village_rp_engine.core.mode_controller import build_world_engine, create_default_world_snapshot, run_mode_step
-from village_rp_engine.core.world_engine import build_world_snapshot
-from village_rp_engine.domain.location_data import build_locations
-from village_rp_engine.domain.settlement_data import get_phase1_npc_name_map
+from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import WorldSnapshot
 from village_rp_engine.models.player_action import PlayerAction
@@ -144,6 +142,7 @@ HTML_PAGE = r"""
       <h1>Village RP Engine MVP UI</h1>
       <div class="summary">
         <div><strong id="dayTick">Day 1 | Tick 0 | 아침</strong></div>
+        <div>현재 정착지: <span id="activeSettlement">village_1</span></div>
         <div>현재 위치: <span id="playerLocation">광장</span></div>
         <div>Mode: <span>RP</span></div>
       </div>
@@ -192,7 +191,11 @@ HTML_PAGE = r"""
             </div>
           </div>
           <div class="section">
-            <h3>이동</h3>
+            <h3>정착지 이동</h3>
+            <div class="button-row" id="travelButtons"></div>
+          </div>
+          <div class="section">
+            <h3>위치 이동</h3>
             <div class="button-row" id="moveButtons"></div>
           </div>
           <div class="section">
@@ -201,7 +204,7 @@ HTML_PAGE = r"""
             <div class="npc-list" id="presentNpcs"></div>
           </div>
           <div class="error" id="errorText"></div>
-          <div class="hint">서사 결과를 위에서 먼저 보고, 아래 상세 로그로 원인을 추적한다.</div>
+          <div class="hint">ACTIVE settlement만 장면과 대화를 렌더링하고, 다른 settlement는 경량 업데이트만 수행한다.</div>
         </div>
 
         <div class="panel">
@@ -217,6 +220,10 @@ HTML_PAGE = r"""
             <summary>NPC 위치 / 상태</summary>
             <pre id="npcStateLog"></pre>
           </details>
+          <details>
+            <summary>Chronicle</summary>
+            <pre id="chronicleLog"></pre>
+          </details>
         </div>
       </div>
     </div>
@@ -224,6 +231,7 @@ HTML_PAGE = r"""
 
   <script>
     const moveButtons = document.getElementById('moveButtons');
+    const travelButtons = document.getElementById('travelButtons');
     const talkButtons = document.getElementById('talkButtons');
     const presentNpcs = document.getElementById('presentNpcs');
     const errorText = document.getElementById('errorText');
@@ -247,6 +255,7 @@ HTML_PAGE = r"""
 
     function renderState(data) {
       document.getElementById('dayTick').textContent = `Day ${data.day} | Tick ${data.tick} | ${data.time_phase}`;
+      document.getElementById('activeSettlement').textContent = data.active_settlement_id;
       document.getElementById('playerLocation').textContent = data.player_location;
       renderList('scenes', data.visible_scenes);
       renderList('dialogues', data.dialogues, (item) => `${item.speaker_name}: "${item.text}"`);
@@ -259,6 +268,15 @@ HTML_PAGE = r"""
       document.getElementById('worldLog').textContent = data.world_log.join('\n');
       document.getElementById('rumorLog').textContent = data.rumor_lines.join('\n') || '없음';
       document.getElementById('npcStateLog').textContent = data.npc_status_lines.join('\n');
+      document.getElementById('chronicleLog').textContent = data.chronicle_lines.join('\n');
+
+      travelButtons.innerHTML = '';
+      for (const settlementId of data.available_settlements) {
+        const button = document.createElement('button');
+        button.textContent = settlementId;
+        button.onclick = () => performAction({ action_type: 'travel', target_settlement_id: settlementId });
+        travelButtons.appendChild(button);
+      }
 
       moveButtons.innerHTML = '';
       for (const location of data.available_locations) {
@@ -325,30 +343,15 @@ HTML_PAGE = r"""
 """
 
 
-LOCATIONS = [location for location in build_locations() if location != '집']
-NPC_NAME_BY_ID = get_phase1_npc_name_map()
-
-
 class EngineSession:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.world_engine = build_world_engine()
         self.snapshot_state = create_default_world_snapshot()
-        self._prime_initial_state()
-
-    def _prime_initial_state(self) -> None:
-        settlement_state = self.snapshot_state.settlement_state
-        if not settlement_state.npc_locations:
-            settlement_state.npc_locations = self.world_engine.settlement_engine.movement_system.resolve_locations_for_phase(
-                settlement_state.time_phase
-            )
-            settlement_state.previous_npc_locations = dict(settlement_state.npc_locations)
-            self.snapshot_state = build_world_snapshot(settlement_state, pending_influences=self.snapshot_state.pending_influences)
 
     def reset(self) -> dict[str, Any]:
         with self._lock:
             self.snapshot_state = create_default_world_snapshot()
-            self._prime_initial_state()
             return serialize_snapshot(self.snapshot_state)
 
     def snapshot(self) -> dict[str, Any]:
@@ -362,8 +365,19 @@ class EngineSession:
             except ValueError as exc:
                 return HTTPStatus.BAD_REQUEST, {'error': str(exc)}
             settlement_state = self.snapshot_state.settlement_state
+            settlement_definition = self.snapshot_state.settlement_definition
             if action.action_type == 'move' and action.target_location == settlement_state.player_location:
                 return HTTPStatus.BAD_REQUEST, {'error': f'이미 {settlement_state.player_location}에 있다.'}
+            if action.action_type == 'move' and action.target_location not in settlement_definition.locations:
+                return HTTPStatus.BAD_REQUEST, {'error': '이동할 수 없는 장소다.'}
+            if action.action_type == 'travel' and action.target_settlement_id == self.snapshot_state.active_settlement_id:
+                return HTTPStatus.BAD_REQUEST, {'error': '이미 그 정착지에 있다.'}
+            if action.action_type == 'travel' and not can_travel_between_settlements(
+                self.snapshot_state.active_settlement_id,
+                action.target_settlement_id,
+                self.snapshot_state.settlement_links,
+            ):
+                return HTTPStatus.BAD_REQUEST, {'error': '직접 연결된 정착지로만 이동할 수 있다.'}
             self.snapshot_state = run_mode_step(
                 self.world_engine,
                 self.snapshot_state,
@@ -439,26 +453,40 @@ def build_action(payload: dict[str, Any]) -> PlayerAction:
         return PlayerAction.wait()
     if action_type == 'move':
         target_location = payload.get('target_location')
-        if not isinstance(target_location, str) or target_location not in LOCATIONS:
+        if not isinstance(target_location, str):
             raise ValueError('이동할 수 없는 장소다.')
         return PlayerAction.move(target_location)
     if action_type == 'talk':
         target_npc_id = payload.get('target_npc_id')
-        if not isinstance(target_npc_id, str) or target_npc_id not in NPC_NAME_BY_ID:
+        if not isinstance(target_npc_id, str):
             raise ValueError('대화할 수 없는 대상이다.')
         return PlayerAction.talk(target_npc_id)
+    if action_type == 'travel':
+        target_settlement_id = payload.get('target_settlement_id')
+        if not isinstance(target_settlement_id, str):
+            raise ValueError('이동할 수 없는 정착지다.')
+        return PlayerAction.travel(target_settlement_id)
     raise ValueError('지원하지 않는 행동이다.')
 
 
 def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
     settlement_state = snapshot.settlement_state
+    settlement_definition = snapshot.settlement_definition
     presentation_state = snapshot.presentation_state
+    available_locations = [location for location in settlement_definition.locations if location != '집']
+    available_settlements = [
+        settlement_id
+        for settlement_id in snapshot.settlement_definitions
+        if can_travel_between_settlements(snapshot.active_settlement_id, settlement_id, snapshot.settlement_links)
+    ]
     return {
+        'active_settlement_id': snapshot.active_settlement_id,
         'day': settlement_state.day,
         'tick': settlement_state.tick,
         'time_phase': settlement_state.time_phase,
         'player_location': settlement_state.player_location,
-        'available_locations': LOCATIONS,
+        'available_locations': available_locations,
+        'available_settlements': available_settlements,
         'present_npcs': [
             {'npc_id': npc.npc_id, 'name': npc.name}
             for npc in presentation_state.present_npcs
@@ -478,6 +506,10 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
         'relationships': list(presentation_state.relationship_lines),
         'world_log': list(presentation_state.world_log_lines),
         'npc_status_lines': list(presentation_state.npc_status_lines),
+        'chronicle_lines': [
+            f'{entry.settlement_id or snapshot.active_settlement_id}: {entry.text}'
+            for entry in presentation_state.chronicle_entries
+        ],
     }
 
 
