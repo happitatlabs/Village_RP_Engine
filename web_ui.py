@@ -217,24 +217,25 @@ HTML_PAGE = r"""
     }
     * { box-sizing: border-box; }
     html {
-      min-height: 100%;
+      height: 100%;
     }
     body {
       margin: 0;
       background: linear-gradient(180deg, #0f1113 0%, #15181b 100%);
       color: var(--text);
       font: 15px/1.5 Georgia, "Times New Roman", serif;
-      min-height: 100svh;
-      overflow-x: hidden;
+      height: 100svh;
+      overflow: hidden;
     }
     .app {
       width: min(100%, 1180px);
       margin: 0 auto;
-      min-height: 100svh;
+      height: 100svh;
       padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
       display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
       gap: clamp(10px, 1.6vmin, 16px);
-      align-content: start;
+      overflow: hidden;
     }
     .panel {
       background: var(--panel);
@@ -254,14 +255,18 @@ HTML_PAGE = r"""
     }
     .grid {
       display: grid;
-      grid-template-columns: minmax(0, 1.75fr) minmax(260px, 0.8fr);
+      grid-template-columns: minmax(0, 1fr);
       gap: clamp(10px, 1.6vmin, 16px);
-      align-items: start;
+      align-items: stretch;
       min-height: 0;
+      overflow: hidden;
     }
     .main-panel {
       display: grid;
       gap: 14px;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .section { margin-bottom: 14px; }
     .section:last-child { margin-bottom: 0; }
@@ -280,6 +285,46 @@ HTML_PAGE = r"""
     li { margin-bottom: 4px; }
     .empty { color: var(--muted); }
     .controls { display: grid; gap: 14px; }
+    .system-toggle {
+      position: fixed;
+      right: 0;
+      top: 50%;
+      z-index: 18;
+      min-height: 86px;
+      padding: 10px 8px;
+      border-right: 0;
+      transform: translateY(-50%);
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      background: #252a30;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    }
+    .system-drawer {
+      position: fixed;
+      top: max(10px, env(safe-area-inset-top));
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      z-index: 19;
+      width: min(420px, calc(100vw - 20px));
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .system-drawer-header {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      margin: -16px -16px 12px;
+      padding: 12px 16px;
+    }
+    .system-drawer-header h2 {
+      margin: 0;
+    }
     .button-row {
       display: flex;
       flex-wrap: wrap;
@@ -403,22 +448,6 @@ HTML_PAGE = r"""
       body {
         font-size: 14px;
       }
-      .app {
-        height: 100svh;
-        overflow: hidden;
-        grid-template-rows: auto minmax(0, 1fr);
-      }
-      .grid {
-        align-items: stretch;
-        overflow: hidden;
-      }
-      .main-panel,
-      .controls {
-        min-height: 0;
-        max-height: 100%;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-      }
       .summary strong {
         font-size: 18px;
       }
@@ -435,6 +464,12 @@ HTML_PAGE = r"""
     @media (orientation: portrait) {
       .app {
         width: min(100%, 540px);
+      }
+      .system-toggle {
+        top: auto;
+        right: max(0px, env(safe-area-inset-right));
+        bottom: calc(84px + env(safe-area-inset-bottom));
+        transform: none;
       }
     }
     @media (max-width: 820px) {
@@ -520,21 +555,6 @@ HTML_PAGE = r"""
           <ul class="hint" id="facilityHints"></ul>
         </div>
         <details class="surface-detail">
-          <summary>시스템 보기: 장면과 대화</summary>
-          <div class="section">
-            <h2>Visible Scenes</h2>
-            <ul id="scenes"></ul>
-          </div>
-          <div class="section">
-            <h2>Dialogues</h2>
-            <ul id="dialogues"></ul>
-          </div>
-          <div class="section">
-            <h2>발생 이벤트</h2>
-            <ul id="events"></ul>
-          </div>
-        </details>
-        <details class="surface-detail">
           <summary>소문과 기록</summary>
           <div class="section">
             <h2>Rumor 요약</h2>
@@ -562,7 +582,11 @@ HTML_PAGE = r"""
         </details>
       </div>
 
-      <div class="controls">
+      <div class="controls system-drawer" id="systemDrawer" hidden>
+        <div class="system-drawer-header">
+          <h2>시스템 보기</h2>
+          <button class="secondary" id="systemCloseButton" type="button">닫기</button>
+        </div>
         <div class="panel" id="actionPanel" hidden>
           <h2>행동</h2>
           <div class="section" id="waitSection">
@@ -597,6 +621,24 @@ HTML_PAGE = r"""
         </div>
 
         <div class="panel">
+          <details open>
+            <summary>장면과 대화</summary>
+            <div class="section">
+              <h2>Visible Scenes</h2>
+              <ul id="scenes"></ul>
+            </div>
+            <div class="section">
+              <h2>Dialogues</h2>
+              <ul id="dialogues"></ul>
+            </div>
+            <div class="section">
+              <h2>발생 이벤트</h2>
+              <ul id="events"></ul>
+            </div>
+          </details>
+        </div>
+
+        <div class="panel">
           <details>
             <summary>개발자 로그: World Log</summary>
             <pre id="worldLog"></pre>
@@ -617,6 +659,8 @@ HTML_PAGE = r"""
       </div>
     </div>
   </div>
+
+  <button class="system-toggle" id="systemToggleButton" type="button">시스템</button>
 
   <div class="guidance-backdrop" id="guidancePopup" hidden role="dialog" aria-modal="true" aria-labelledby="guidanceTitle">
     <div class="guidance-dialog">
@@ -653,6 +697,9 @@ HTML_PAGE = r"""
     const guidancePopup = document.getElementById('guidancePopup');
     const guidanceMessage = document.getElementById('guidanceMessage');
     const guidanceCloseButton = document.getElementById('guidanceCloseButton');
+    const systemDrawer = document.getElementById('systemDrawer');
+    const systemToggleButton = document.getElementById('systemToggleButton');
+    const systemCloseButton = document.getElementById('systemCloseButton');
 
     function showGuidancePopup(message) {
       const text = message || '요청 처리 중 오류가 발생했다.';
@@ -672,6 +719,19 @@ HTML_PAGE = r"""
         hideGuidancePopup();
       }
     };
+
+    function openSystemDrawer() {
+      systemDrawer.hidden = false;
+      systemCloseButton.focus();
+    }
+
+    function closeSystemDrawer() {
+      systemDrawer.hidden = true;
+      systemToggleButton.focus();
+    }
+
+    systemToggleButton.onclick = openSystemDrawer;
+    systemCloseButton.onclick = closeSystemDrawer;
 
     function renderList(id, items, formatter) {
       const target = document.getElementById(id);

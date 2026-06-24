@@ -146,7 +146,8 @@ def test_action_panel_is_hidden_from_player_surface() -> None:
 
 
 def test_web_ui_has_landscape_and_portrait_viewport_layout_rules() -> None:
-    assert 'min-height: 100svh;' in HTML_PAGE
+    assert 'height: 100svh;' in HTML_PAGE
+    assert 'overflow: hidden;' in HTML_PAGE
     assert '@media (orientation: landscape) and (max-height: 720px)' in HTML_PAGE
     assert '@media (orientation: portrait)' in HTML_PAGE
     assert '@media (max-width: 480px) and (orientation: portrait)' in HTML_PAGE
@@ -583,7 +584,10 @@ def test_situation_card_matches_current_non_square_location() -> None:
 
 
 def test_system_scene_and_log_sections_are_collapsed_by_default() -> None:
-    assert '<summary>시스템 보기: 장면과 대화</summary>' in HTML_PAGE
+    assert 'id="systemToggleButton"' in HTML_PAGE
+    assert 'id="systemDrawer" hidden' in HTML_PAGE
+    assert 'function openSystemDrawer()' in HTML_PAGE
+    assert '<summary>장면과 대화</summary>' in HTML_PAGE
     assert '<details class="surface-detail" open>' not in HTML_PAGE
     assert '<summary>개발자 로그: World Log</summary>' in HTML_PAGE
     assert '<details open>\n            <summary>개발자 로그: World Log</summary>' not in HTML_PAGE
