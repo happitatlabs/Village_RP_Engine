@@ -108,3 +108,63 @@ def test_web_ui_recent_save_list_is_exposed_at_top(tmp_path, monkeypatch) -> Non
     assert payload['recent_saves']
     assert payload['recent_saves'][0]['slot'] == 3
     assert 'id="recentSaves"' in HTML_PAGE
+
+
+def test_serialize_snapshot_includes_facility_surface() -> None:
+    snapshot = create_default_world_snapshot()
+
+    payload = serialize_snapshot(snapshot)
+
+    assert payload['selected_facility_id'] == 'square'
+    assert any(facility['facility_id'] == 'tavern' for facility in payload['facilities'])
+    assert payload['facility_view']['title'] == '광장'
+    assert 'cards' in payload['facility_view']
+    assert 'npc_cards' in payload['facility_view']
+    assert payload['settlement_flavor_title'] == '회색언덕 마을'
+    assert any('에단이 쓰러져 있던 너를 회색언덕으로 데려왔다.' in line for card in payload['facility_view']['cards'] for line in card['lines'])
+
+
+def test_web_ui_facility_surface_differs_by_settlement_flavor() -> None:
+    session = EngineSession()
+
+    village_payload = serialize_snapshot(session.snapshot_state)
+    assert not any(facility['facility_id'] == 'market' for facility in village_payload['facilities'])
+    assert village_payload['settlement_flavor_title'] == '회색언덕 마을'
+
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('village_2'))
+    village_2_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='clinic')
+    assert any(facility['facility_id'] == 'clinic' for facility in village_2_payload['facilities'])
+    assert village_2_payload['facility_view']['title'] == '치료소'
+    assert '여행자와 피난민' in village_2_payload['settlement_flavor_title']
+
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('town_1'))
+    town_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='market')
+    assert any(facility['facility_id'] == 'market' for facility in town_payload['facilities'])
+    assert town_payload['facility_view']['title'] == '시장'
+    assert '상업 중심' in town_payload['settlement_flavor_title']
+
+
+def test_web_ui_archive_surface_exposes_mvp_recording_frame() -> None:
+    snapshot = create_default_world_snapshot()
+
+    payload = serialize_snapshot(snapshot, selected_facility_id='archive')
+
+    assert payload['facility_view']['title'] == '기록관'
+    assert any(card['title'] == '기록자의 첫 장' for card in payload['facility_view']['cards'])
+
+
+def test_engine_session_keeps_facility_on_load_and_resets_to_square(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(world_engine_module, 'SAVE_DIR', tmp_path / 'saves')
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'archive'
+
+    session.save(1)
+    status, payload = session.load(1)
+    assert status == 200
+    assert payload['selected_facility_id'] == 'archive'
+
+    payload = session.reset()
+    assert payload['selected_facility_id'] == 'square'

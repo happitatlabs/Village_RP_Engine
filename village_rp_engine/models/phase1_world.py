@@ -44,6 +44,25 @@ class InfluencePacket:
 
 
 @dataclass(frozen=True)
+class FacilityDefinition:
+    facility_id: str
+    label: str
+    facility_type: str
+    enabled: bool = True
+    target_location: str | None = None
+
+
+@dataclass(frozen=True)
+class SettlementFlavor:
+    title: str
+    summary: str
+    rumor_bias: tuple[str, ...] = ()
+    rumor_intro: str = ''
+    archive_intro: str = ''
+    npc_bias: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class SettlementDefinition:
     settlement_id: str
     region_id: str
@@ -55,6 +74,8 @@ class SettlementDefinition:
     security: SecurityState
     stress_default: int
     rumor_tone: str = 'neutral'
+    facilities: tuple[FacilityDefinition, ...] = ()
+    flavor: SettlementFlavor = field(default_factory=lambda: SettlementFlavor(title='', summary=''))
 
 
 @dataclass(frozen=True)

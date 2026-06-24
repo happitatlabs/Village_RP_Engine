@@ -212,6 +212,20 @@ def test_talk_alias_village_elder_normalized() -> None:
 
     assert action == PlayerAction.talk("village_elder")
 
+
+def test_talk_alias_ethan_normalized() -> None:
+    inputs = deque(["에단 대화"])
+
+    action = prompt_player_action(
+        ["광장", "대장간", "술집"],
+        ["ethan"],
+        current_location="광장",
+        input_func=lambda _: inputs.popleft(),
+        output_func=lambda _: None,
+    )
+
+    assert action == PlayerAction.talk("ethan")
+
     inputs = deque(["대화 elder"])
     action = prompt_player_action(
         ["광장", "대장간", "술집"],

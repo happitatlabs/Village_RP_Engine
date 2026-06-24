@@ -205,3 +205,13 @@ def test_recent_save_slots_are_listed_in_recent_order(tmp_path, monkeypatch) -> 
     assert [item['slot'] for item in recent][:2] == [2, 1]
     assert recent[0]['saved_at'] >= recent[1]['saved_at']
     assert first['active_settlement_id'] == second['active_settlement_id']
+
+
+def test_save_dir_can_be_overridden_by_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(world_engine_module, 'SAVE_DIR', None)
+    monkeypatch.setenv('VRE_SAVE_DIR', str(tmp_path / 'android-saves'))
+    snapshot = create_default_world_snapshot()
+
+    save_world_state_to_slot(snapshot, 1)
+
+    assert (tmp_path / 'android-saves' / 'slot_1.json').exists()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, replace
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -56,7 +57,7 @@ from village_rp_engine.systems.relationship_system import RelationshipSystem
 
 RELATIONSHIP_SYSTEM = RelationshipSystem()
 NPC_NAME_BY_ID = get_phase2_npc_name_map()
-SAVE_DIR = Path(__file__).resolve().parents[2] / 'saves'
+SAVE_DIR: Path | None = None
 SAVE_SLOT_COUNT = 3
 SPECIAL_NPC_ID = 'wandering_stranger'
 PLAYER_INTERACTION_CHOICES: dict[str, dict[str, object]] = {
@@ -102,6 +103,15 @@ PLAYER_INTERACTION_CHOICES: dict[str, dict[str, object]] = {
 }
 
 
+def _resolve_save_dir() -> Path:
+    override = os.environ.get('VRE_SAVE_DIR')
+    if override:
+        return Path(override)
+    if SAVE_DIR is not None:
+        return SAVE_DIR
+    return Path(__file__).resolve().parents[2] / 'saves'
+
+
 def _validate_save_slot(slot: int) -> int:
     if slot < 1 or slot > SAVE_SLOT_COUNT:
         raise ValueError(f'저장 슬롯은 1부터 {SAVE_SLOT_COUNT}까지여야 한다.')
@@ -109,8 +119,9 @@ def _validate_save_slot(slot: int) -> int:
 
 
 def _ensure_save_dir() -> Path:
-    SAVE_DIR.mkdir(parents=True, exist_ok=True)
-    return SAVE_DIR
+    save_dir = _resolve_save_dir()
+    save_dir.mkdir(parents=True, exist_ok=True)
+    return save_dir
 
 
 def get_save_slot_path(slot: int) -> Path:

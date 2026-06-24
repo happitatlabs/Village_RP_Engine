@@ -33,6 +33,8 @@ NPC_ALIASES: dict[str, str] = {
     '농부': 'farmer',
     'innkeeper': 'innkeeper',
     '여관주인': 'innkeeper',
+    'ethan': 'ethan',
+    '에단': 'ethan',
 }
 
 SETTLEMENT_ALIASES: dict[str, str] = {

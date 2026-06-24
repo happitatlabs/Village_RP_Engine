@@ -11,10 +11,12 @@ from village_rp_engine.models.phase1_world import (
     ContinentDefinition,
     ContinentRuntimeState,
     EconomyProfile,
+    FacilityDefinition,
     RegionDefinition,
     RegionRuntimeState,
     SecurityState,
     SettlementDefinition,
+    SettlementFlavor,
     SettlementLink,
 )
 
@@ -23,6 +25,59 @@ PHASE1_SETTLEMENT_ID = 'village_1'
 PHASE1_ECONOMY_PROFILE = {'grain': 80, 'iron': 10}
 PHASE1_SECURITY = 60
 PHASE1_STRESS = 20
+
+
+def build_facilities(
+    *,
+    has_tavern: bool,
+    has_square: bool = True,
+    has_clinic: bool = False,
+    has_market: bool = False,
+) -> tuple[FacilityDefinition, ...]:
+    facilities: list[FacilityDefinition] = []
+    if has_square:
+        facilities.append(
+            FacilityDefinition(
+                facility_id='square',
+                label='광장',
+                facility_type='public',
+                target_location='광장',
+            )
+        )
+    if has_tavern:
+        facilities.append(
+            FacilityDefinition(
+                facility_id='tavern',
+                label='술집',
+                facility_type='rumor',
+                target_location='술집',
+            )
+        )
+    if has_clinic:
+        facilities.append(
+            FacilityDefinition(
+                facility_id='clinic',
+                label='치료소',
+                facility_type='recovery',
+            )
+        )
+    if has_market:
+        facilities.append(
+            FacilityDefinition(
+                facility_id='market',
+                label='시장',
+                facility_type='trade',
+                target_location='시장',
+            )
+        )
+    facilities.extend(
+        (
+            FacilityDefinition('archive', '기록관', 'chronicle'),
+            FacilityDefinition('base', '거점', 'safehouse'),
+            FacilityDefinition('outside', '도시 밖으로', 'travel'),
+        )
+    )
+    return tuple(facilities)
 
 
 def build_phase1_settlement() -> SettlementDefinition:
@@ -38,6 +93,15 @@ def build_phase1_settlement() -> SettlementDefinition:
         security=SecurityState(value=PHASE1_SECURITY),
         stress_default=PHASE1_STRESS,
         rumor_tone='village',
+        facilities=build_facilities(has_tavern=True),
+        flavor=SettlementFlavor(
+            title='회색언덕 마을',
+            summary='작고 조용한 시골 마을이다. 에단이 너를 구해 들인 뒤, 사람들의 소문과 기록이 천천히 쌓이고 있다.',
+            rumor_bias=('local', 'gossip', 'daily_life'),
+            rumor_intro='회색언덕 사람들은 이런 이야기를 주고받는다.',
+            archive_intro='회색언덕 기록관에는 사람들이 남긴 흔적과 네가 모은 기록이 함께 쌓인다.',
+            npc_bias=('주민', '농부', '마을 청년', '경비병'),
+        ),
     )
 
 
@@ -94,6 +158,15 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             security=SecurityState(value=55),
             stress_default=25,
             rumor_tone='granary',
+            facilities=build_facilities(has_tavern=True, has_clinic=True),
+            flavor=SettlementFlavor(
+                title='여행자와 피난민이 드나드는 마을',
+                summary='상처를 추스르는 이들과 길손들의 발걸음이 자주 머문다.',
+                rumor_bias=('refugee', 'traveler', 'recovery'),
+                rumor_intro='길손들과 머문 이들이 남긴 이야기가 이어진다.',
+                archive_intro='여행자들이 남긴 기록과 회복의 흔적이 쌓이는 곳이다.',
+                npc_bias=('의사', '약초상', '여행자', '피난민'),
+            ),
         ),
         'town_1': SettlementDefinition(
             settlement_id='town_1',
@@ -106,6 +179,15 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             security=SecurityState(value=72),
             stress_default=18,
             rumor_tone='market',
+            facilities=build_facilities(has_tavern=True, has_market=True),
+            flavor=SettlementFlavor(
+                title='상업 중심 소도시',
+                summary='거래와 방문객, 계약 이야기가 하루 종일 오가는 곳이다.',
+                rumor_bias=('trade', 'merchant', 'politics'),
+                rumor_intro='장터와 여관에서는 이런 말들이 오간다.',
+                archive_intro='도시 기록관에는 거래와 분쟁의 흔적이 차곡차곡 남아 있다.',
+                npc_bias=('상인', '관리', '길드원', '방문객'),
+            ),
         ),
     }
 

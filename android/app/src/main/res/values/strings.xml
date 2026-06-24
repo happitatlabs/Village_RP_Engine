@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Village RP Engine</string>
+    <string name="loading_state">Village RP Engine을 불러오는 중…</string>
+    <string name="retry_state">서버 연결을 다시 시도하는 중…</string>
+    <string name="server_failed_state">내장 서버를 시작하지 못했다. 앱을 다시 실행해라.</string>
+    <string name="booting_state">내장 서버 기동 중… (%1$d/%2$d)</string>
+</resources>

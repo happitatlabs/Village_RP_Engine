@@ -12,5 +12,6 @@ PLAYER_RELATIONSHIP_NPC_IDS = [
     "innkeeper",
     "village_elder",
     "guard_captain",
+    "ethan",
 ]
 MEDIATE_TAVERN_CONFLICT_QUEST_ID = "mediate_tavern_conflict"

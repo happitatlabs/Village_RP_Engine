@@ -31,6 +31,54 @@ from village_rp_engine.models.phase1_world import WorldSnapshot
 from village_rp_engine.models.player_action import PlayerAction
 
 
+DEFAULT_FACILITY_ID = 'square'
+NPC_CARD_METADATA = {
+    'blacksmith': {'role': '대장장이', 'personality': '완고함'},
+    'farmer': {'role': '농부', 'personality': '성실함'},
+    'guard_captain': {'role': '경비대장', 'personality': '신중함'},
+    'innkeeper': {'role': '여관주인', 'personality': '눈치 빠름'},
+    'village_elder': {'role': '촌장', 'personality': '노련함'},
+    'ethan': {
+        'role': '널 구해준 마을 청년',
+        'personality': '고집 셈',
+        'default_interest': '이방인이 된 너와 마을 주변의 낌새를 살피는 일',
+    },
+}
+
+MVP_STORY_CARDS = {
+    'village_1': {
+        'square': {
+            'title': '회색언덕의 시작',
+            'subtitle': '이방인으로서 맞는 첫 하루',
+            'lines': [
+                '에단이 쓰러져 있던 너를 회색언덕으로 데려왔다.',
+                '광장에서는 오늘의 사건과 사람들의 표정을 가장 먼저 읽을 수 있다.',
+            ],
+        },
+        'archive': {
+            'title': '기록자의 첫 장',
+            'subtitle': '기록관 견습생의 시선',
+            'lines': [
+                '이곳에서 소문과 사건, 사람들의 흔적을 이어 하나의 기록으로 남긴다.',
+                '기억의 신을 믿는 오래된 서가에는 사라지지 않아야 할 이름들이 적혀 있다.',
+            ],
+        },
+    },
+}
+
+RUMOR_BIAS_KEYWORDS = {
+    'local': ('광장', '술집', '주민', '순찰'),
+    'gossip': ('소문', '이야기', '웅성'),
+    'daily_life': ('농장', '수확', '아침', '저녁'),
+    'refugee': ('피난', '붐비', '도착'),
+    'traveler': ('여행자', '길손', '북쪽 길'),
+    'recovery': ('치료', '회복', '다친'),
+    'trade': ('시장', '가격', '거래'),
+    'merchant': ('상인', '계약', '길드'),
+    'politics': ('선출', '의견', '관리'),
+}
+
+
 HTML_PAGE = r"""
 <!doctype html>
 <html lang="ko">
@@ -106,6 +154,9 @@ HTML_PAGE = r"""
       flex-wrap: wrap;
       gap: 8px;
     }
+    .button-row.tight button {
+      min-height: 44px;
+    }
     button {
       background: var(--panel-2);
       color: var(--text);
@@ -113,9 +164,14 @@ HTML_PAGE = r"""
       padding: 8px 12px;
       cursor: pointer;
       font: inherit;
+      min-height: 44px;
     }
     button:hover { border-color: var(--accent); }
     button.secondary { color: var(--muted); }
+    button.active {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
     .hint {
       color: var(--muted);
       font-size: 13px;
@@ -141,6 +197,36 @@ HTML_PAGE = r"""
       gap: 4px;
       color: var(--muted);
       font-size: 13px;
+    }
+    .facility-view {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    .card-list {
+      display: grid;
+      gap: 10px;
+    }
+    .mini-card {
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid var(--line);
+      padding: 12px;
+    }
+    .mini-card h3 {
+      margin: 0 0 8px;
+      color: var(--text);
+      font-size: 15px;
+    }
+    .mini-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .mini-card ul {
+      margin-top: 8px;
+      color: var(--text);
     }
     .error {
       color: var(--danger);
@@ -170,6 +256,20 @@ HTML_PAGE = r"""
 
     <div class="grid">
       <div class="panel">
+        <div class="section">
+          <h2>시설</h2>
+          <div class="button-row tight" id="facilityButtons"></div>
+        </div>
+        <div class="facility-view">
+          <div>
+            <h2 id="facilityTitle">광장</h2>
+            <div class="hint" id="facilityDescription"></div>
+          </div>
+          <ul id="facilitySummary"></ul>
+          <div class="button-row tight" id="facilityActionButtons"></div>
+          <div class="card-list" id="facilityCards"></div>
+          <div class="card-list" id="facilityNpcCards"></div>
+        </div>
         <div class="section">
           <h2>Visible Scenes</h2>
           <ul id="scenes"></ul>
@@ -257,6 +357,13 @@ HTML_PAGE = r"""
   </div>
 
   <script>
+    const facilityButtons = document.getElementById('facilityButtons');
+    const facilityTitle = document.getElementById('facilityTitle');
+    const facilityDescription = document.getElementById('facilityDescription');
+    const facilitySummary = document.getElementById('facilitySummary');
+    const facilityActionButtons = document.getElementById('facilityActionButtons');
+    const facilityCards = document.getElementById('facilityCards');
+    const facilityNpcCards = document.getElementById('facilityNpcCards');
     const moveButtons = document.getElementById('moveButtons');
     const travelButtons = document.getElementById('travelButtons');
     const talkButtons = document.getElementById('talkButtons');
@@ -294,6 +401,93 @@ HTML_PAGE = r"""
       renderList('playerRelationships', data.player_relationships);
       renderList('relationships', data.relationships);
       renderList('recentSaves', data.recent_saves, (item) => `슬롯 ${item.slot} | Day ${item.day} Tick ${item.tick} | ${item.active_settlement_id} | ${item.saved_at}`);
+
+      facilityButtons.innerHTML = '';
+      for (const facility of data.facilities) {
+        const button = document.createElement('button');
+        button.textContent = facility.label;
+        if (facility.facility_id === data.selected_facility_id) {
+          button.classList.add('active');
+        }
+        button.onclick = () => performAction({ action_type: 'select_facility', facility_id: facility.facility_id });
+        facilityButtons.appendChild(button);
+      }
+      facilityTitle.textContent = data.facility_view.title;
+      facilityDescription.textContent = data.facility_view.description;
+      renderList('facilitySummary', data.facility_view.summary_lines);
+      facilityActionButtons.innerHTML = '';
+      for (const action of data.facility_view.actions) {
+        const button = document.createElement('button');
+        button.textContent = action.label;
+        if (action.secondary) {
+          button.classList.add('secondary');
+        }
+        button.onclick = () => {
+          if (action.payload.client_action === 'save') {
+            document.getElementById('saveButton').click();
+            return;
+          }
+          if (action.payload.client_action === 'load') {
+            document.getElementById('loadButton').click();
+            return;
+          }
+          if (action.payload.client_action === 'reset') {
+            document.getElementById('resetButton').click();
+            return;
+          }
+          performAction(action.payload);
+        };
+        facilityActionButtons.appendChild(button);
+      }
+      facilityCards.innerHTML = '';
+      for (const card of data.facility_view.cards) {
+        const item = document.createElement('div');
+        item.className = 'mini-card';
+        const title = document.createElement('h3');
+        title.textContent = card.title;
+        const subtitle = document.createElement('p');
+        subtitle.textContent = card.subtitle;
+        item.appendChild(title);
+        item.appendChild(subtitle);
+        if (card.lines && card.lines.length) {
+          const list = document.createElement('ul');
+          for (const lineText of card.lines) {
+            const li = document.createElement('li');
+            li.textContent = lineText;
+            list.appendChild(li);
+          }
+          item.appendChild(list);
+        }
+        facilityCards.appendChild(item);
+      }
+      facilityNpcCards.innerHTML = '';
+      for (const npc of data.facility_view.npc_cards) {
+        const item = document.createElement('div');
+        item.className = 'mini-card';
+        const title = document.createElement('h3');
+        title.textContent = `${npc.name} | ${npc.role}`;
+        const subtitle = document.createElement('p');
+        subtitle.textContent = `성격: ${npc.personality} | 관심사: ${npc.current_interest}`;
+        item.appendChild(title);
+        item.appendChild(subtitle);
+        if (npc.lines && npc.lines.length) {
+          const list = document.createElement('ul');
+          for (const lineText of npc.lines) {
+            const li = document.createElement('li');
+            li.textContent = lineText;
+            list.appendChild(li);
+          }
+          item.appendChild(list);
+        }
+        const row = document.createElement('div');
+        row.className = 'button-row';
+        const talkButton = document.createElement('button');
+        talkButton.textContent = '대화하기';
+        talkButton.onclick = () => performAction({ action_type: 'talk', target_npc_id: npc.npc_id });
+        row.appendChild(talkButton);
+        item.appendChild(row);
+        facilityNpcCards.appendChild(item);
+      }
 
       document.getElementById('worldLog').textContent = data.world_log.join('\n');
       document.getElementById('rumorLog').textContent = data.rumor_lines.join('\n') || '없음';
@@ -423,16 +617,261 @@ HTML_PAGE = r"""
 """
 
 
+def _normalize_facility_id(snapshot: WorldSnapshot, facility_id: str | None) -> str:
+    available_ids = [facility.facility_id for facility in snapshot.settlement_definition.facilities if facility.enabled]
+    if facility_id in available_ids:
+        return facility_id
+    return available_ids[0] if available_ids else DEFAULT_FACILITY_ID
+
+
+def _build_rumor_briefing(snapshot: WorldSnapshot) -> list[str]:
+    chronicle_query = build_chronicle_query(snapshot)
+    active_region_id = snapshot.settlement_definition.region_id
+    entries = [
+        *chronicle_query.query_entries(category='RUMOR', settlement_id=snapshot.active_settlement_id, limit=3).entries,
+        *chronicle_query.query_entries(category='INFLUENCE', region_id=active_region_id, limit=2).entries,
+    ]
+    bias_terms = tuple(
+        keyword
+        for bias in snapshot.settlement_definition.flavor.rumor_bias
+        for keyword in RUMOR_BIAS_KEYWORDS.get(bias, ())
+    )
+    weighted_entries = sorted(
+        entries,
+        key=lambda entry: (
+            sum(1 for term in bias_terms if term and term in entry.text),
+            1 if entry.category == 'RUMOR' else 0,
+            entry.day,
+            entry.tick,
+        ),
+        reverse=True,
+    )
+    lines: list[str] = []
+    seen: set[str] = set()
+    prefix = snapshot.settlement_definition.flavor.rumor_intro
+    for entry in weighted_entries:
+        text = entry.text.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        lines.append(f'{prefix} {text}' if prefix else text)
+        if len(lines) >= 3:
+            break
+    return lines or ['오늘은 아직 새로 퍼진 이야기가 없다.']
+
+
+def _build_archive_cards(snapshot: WorldSnapshot) -> list[dict[str, Any]]:
+    chronicle_query = build_chronicle_query(snapshot)
+    active_region_id = snapshot.settlement_definition.region_id
+    archive_intro = snapshot.settlement_definition.flavor.archive_intro
+    cards: list[dict[str, Any]] = []
+    card_sources = [
+        ('최근 기록', chronicle_query.query_entries(limit=3).entries),
+        ('정착지 기록', chronicle_query.query_entries(settlement_id=snapshot.active_settlement_id, limit=3).entries),
+        ('지역 기록', chronicle_query.query_entries(region_id=active_region_id, limit=2).entries),
+        ('플레이어 행적', tuple(item.entry for item in get_player_timeline(snapshot, limit=2))),
+    ]
+    for title, entries in card_sources:
+        if not entries:
+            continue
+        cards.append(
+            {
+                'title': title,
+                'subtitle': archive_intro or f'{len(entries)}개의 기록',
+                'lines': [f"Day {entry.day} Tick {entry.tick} | {entry.text}" for entry in entries],
+            }
+        )
+    story_card = MVP_STORY_CARDS.get(snapshot.active_settlement_id, {}).get('archive')
+    if story_card is not None:
+        cards.insert(0, story_card)
+    return cards
+
+
+def _build_npc_cards(snapshot: WorldSnapshot) -> list[dict[str, Any]]:
+    cards: list[dict[str, Any]] = []
+    fallback_role = snapshot.settlement_definition.flavor.npc_bias[0] if snapshot.settlement_definition.flavor.npc_bias else None
+    for npc in snapshot.presentation_state.present_npcs:
+        metadata = NPC_CARD_METADATA.get(
+            npc.npc_id,
+            {'role': fallback_role or npc.npc_id, 'personality': '침착함'},
+        )
+        recent_states = snapshot.settlement_state.npc_recent_states.get(npc.npc_id, [])
+        npc_location = snapshot.settlement_state.npc_locations.get(npc.npc_id, snapshot.settlement_state.player_location or '광장')
+        current_interest = recent_states[-1].state_id if recent_states else metadata.get('default_interest', f'{npc_location} 주변 상황')
+        cards.append(
+            {
+                'npc_id': npc.npc_id,
+                'name': npc.name,
+                'role': metadata['role'],
+                'personality': metadata['personality'],
+                'current_interest': current_interest,
+                'lines': [
+                    f'현재 위치: {npc_location}',
+                    f'최근 관련 기록: {current_interest}',
+                ],
+            }
+        )
+    return cards
+
+
+def _build_facility_view(snapshot: WorldSnapshot, selected_facility_id: str) -> dict[str, Any]:
+    settlement_state = snapshot.settlement_state
+    chronicle_query = build_chronicle_query(snapshot)
+    flavor = snapshot.settlement_definition.flavor
+    current_location = settlement_state.player_location or '미정'
+    base_summary = [
+        f'정착지: {snapshot.active_settlement_id}',
+        f'상태: security {settlement_state.security}, stress {settlement_state.stress}',
+        f'현재 위치: {current_location}',
+    ]
+    view: dict[str, Any] = {
+        'title': '광장',
+        'description': flavor.summary or '정착지의 공기와 사람들의 움직임을 살피는 기본 화면이다.',
+        'summary_lines': base_summary,
+        'actions': [],
+        'cards': [],
+        'npc_cards': [],
+    }
+
+    if selected_facility_id == 'square':
+        notices = [notice.text for notice in settlement_state.player_notices[-3:]]
+        view['title'] = '광장'
+        view['description'] = flavor.summary or '최근 공지와 공개된 분위기를 살피고, 기본 행동을 선택한다.'
+        view['summary_lines'] = [flavor.title, *base_summary, *notices[:3]] if notices else [flavor.title, *base_summary, '최근 공지가 없다.']
+        view['actions'] = (
+            [{'label': '광장으로 이동', 'payload': {'action_type': 'move', 'target_location': '광장'}}]
+            if settlement_state.player_location != '광장'
+            else [{'label': '기다리기', 'payload': {'action_type': 'wait'}}]
+        )
+        event_lines = [event.outcome_text for event in snapshot.presentation_state.triggered_event_summaries[:3]]
+        view['cards'] = [
+            {
+                'title': '최근 사건',
+                'subtitle': '공개된 움직임',
+                'lines': event_lines or ['아직 공개된 사건이 없다.'],
+            }
+        ]
+        story_card = MVP_STORY_CARDS.get(snapshot.active_settlement_id, {}).get('square')
+        if story_card is not None:
+            view['cards'].insert(0, story_card)
+        view['npc_cards'] = _build_npc_cards(snapshot)
+    elif selected_facility_id == 'tavern':
+        view['title'] = '술집'
+        view['description'] = flavor.rumor_intro or '소문과 인물 대화가 모이는 곳이다. 세계 정보를 모으기에 좋다.'
+        view['summary_lines'] = [*base_summary, *(_build_rumor_briefing(snapshot)[:3])]
+        view['actions'] = (
+            [{'label': '술집으로 이동', 'payload': {'action_type': 'move', 'target_location': '술집'}}]
+            if settlement_state.player_location != '술집'
+            else [
+                {'label': '정보 수집', 'payload': {'action_type': 'select_facility', 'facility_id': 'tavern'}},
+                {'label': '기다리기', 'payload': {'action_type': 'wait'}},
+            ]
+        )
+        view['cards'] = [
+            {
+                'title': '최근 소문',
+                'subtitle': flavor.rumor_intro or '사람들이 주고받는 이야기',
+                'lines': _build_rumor_briefing(snapshot),
+            }
+        ]
+        view['npc_cards'] = _build_npc_cards(snapshot)
+    elif selected_facility_id == 'clinic':
+        view['title'] = '치료소'
+        view['description'] = '회복과 피로, 길 위에서 밀려온 사람들의 소식이 가장 먼저 닿는 곳이다.'
+        view['summary_lines'] = [flavor.title, *base_summary, '치료소는 분위기와 관련 소식을 정리해 보여준다.']
+        view['cards'] = [
+            {
+                'title': '회복의 기척',
+                'subtitle': '치료소 주변에서 오가는 말',
+                'lines': _build_rumor_briefing(snapshot),
+            }
+        ]
+        view['npc_cards'] = _build_npc_cards(snapshot)
+    elif selected_facility_id == 'market':
+        view['title'] = '시장'
+        view['description'] = '거래와 계약, 외부 방문객의 말이 가장 빨리 섞이는 곳이다.'
+        view['summary_lines'] = [flavor.title, *base_summary, '시장은 거래 관련 분위기와 방문객 소식을 보여준다.']
+        view['actions'] = (
+            [{'label': '시장으로 이동', 'payload': {'action_type': 'move', 'target_location': '시장'}}]
+            if settlement_state.player_location != '시장'
+            else [{'label': '기다리기', 'payload': {'action_type': 'wait'}}]
+        )
+        view['cards'] = [
+            {
+                'title': '장터의 말',
+                'subtitle': '상인과 방문객이 남긴 이야기',
+                'lines': _build_rumor_briefing(snapshot),
+            }
+        ]
+        view['npc_cards'] = _build_npc_cards(snapshot)
+    elif selected_facility_id == 'archive':
+        view['title'] = '기록관'
+        view['description'] = flavor.archive_intro or '사건과 정착지의 흐름을 기록 단위로 읽는다.'
+        view['summary_lines'] = [*base_summary, f"최근 기록 수: {chronicle_query.query_entries(limit=6).total_count}"]
+        view['cards'] = _build_archive_cards(snapshot)
+    elif selected_facility_id == 'base':
+        recent_saves = list_recent_save_slots()
+        save_lines = [
+            f"슬롯 {item['slot']} | Day {item['day']} Tick {item['tick']} | {item['active_settlement_id']}"
+            for item in recent_saves[:3]
+        ] or ['최근 저장 기록이 없다.']
+        view['title'] = '거점'
+        view['description'] = '저장, 불러오기, 휴식, 현재 상태를 정리하는 안전한 메뉴다.'
+        view['summary_lines'] = [*base_summary, f"최근 선택: {snapshot.interaction_runtime_state.last_choice_id or '없음'}"]
+        view['actions'] = [
+            {'label': '휴식', 'payload': {'action_type': 'wait'}},
+            {'label': '저장', 'payload': {'client_action': 'save'}},
+            {'label': '불러오기', 'payload': {'client_action': 'load'}},
+            {'label': '리셋', 'payload': {'client_action': 'reset'}, 'secondary': True},
+        ]
+        view['cards'] = [
+            {'title': '최근 저장 슬롯', 'subtitle': 'run 관리', 'lines': save_lines},
+            {'title': '특수 인물 상태', 'subtitle': 'special NPC', 'lines': [f"{npc_id}: {state.status}" for npc_id, state in sorted(snapshot.special_npc_states.items())]},
+        ]
+    elif selected_facility_id == 'outside':
+        destinations = [
+            settlement_id
+            for settlement_id in snapshot.settlement_definitions
+            if can_travel_between_settlements(snapshot.active_settlement_id, settlement_id, snapshot.settlement_links)
+        ]
+        view['title'] = '도시 밖으로'
+        view['description'] = '직접 연결된 다른 정착지로 걸어서 이동한다.'
+        view['summary_lines'] = [*base_summary, '도보 이동은 기본 5틱이 소요된다.']
+        view['actions'] = [
+            {
+                'label': f'{settlement_id}로 이동',
+                'payload': {'action_type': 'travel', 'target_settlement_id': settlement_id, 'travel_mode': 'walk'},
+            }
+            for settlement_id in destinations
+        ]
+        view['cards'] = [
+            {
+                'title': settlement_id,
+                'subtitle': '직접 연결됨',
+                'lines': ['이동 수단: 도보', '소요 시간: 5 ticks'],
+            }
+            for settlement_id in destinations
+        ] or [{'title': '이동 가능 경로 없음', 'subtitle': '현재 연결된 정착지가 없다.', 'lines': []}]
+    if selected_facility_id != 'square':
+        view['actions'] = [
+            *view['actions'],
+            {'label': '돌아가기', 'payload': {'action_type': 'select_facility', 'facility_id': 'square'}, 'secondary': True},
+        ]
+    return view
+
+
 class EngineSession:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self.world_engine = build_world_engine()
         self.snapshot_state = create_default_world_snapshot()
+        self.selected_facility_id = DEFAULT_FACILITY_ID
 
     def reset(self) -> dict[str, Any]:
         with self._lock:
             self.snapshot_state = reset_world_to_seed(self.world_engine)
-            return serialize_snapshot(self.snapshot_state)
+            self.selected_facility_id = DEFAULT_FACILITY_ID
+            return serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
 
     def save(self, slot: int) -> tuple[int, dict[str, Any]]:
         with self._lock:
@@ -440,7 +879,7 @@ class EngineSession:
                 save_world_state_to_slot(self.snapshot_state, slot)
             except Exception:
                 return HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'}
-            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
 
     def load(self, slot: int) -> tuple[int, dict[str, Any]]:
         with self._lock:
@@ -454,14 +893,21 @@ class EngineSession:
                 )
             except Exception:
                 return HTTPStatus.BAD_REQUEST, {'error': '유효한 저장 슬롯(1-3)이 필요하다.'}
-            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
+            self.selected_facility_id = _normalize_facility_id(self.snapshot_state, self.selected_facility_id)
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return serialize_snapshot(self.snapshot_state)
+            return serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
 
     def apply_action(self, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         with self._lock:
+            if payload.get('action_type') == 'select_facility':
+                facility_id = payload.get('facility_id')
+                if not isinstance(facility_id, str):
+                    return HTTPStatus.BAD_REQUEST, {'error': '유효한 시설이 필요하다.'}
+                self.selected_facility_id = _normalize_facility_id(self.snapshot_state, facility_id)
+                return HTTPStatus.OK, serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
             try:
                 action = build_action(payload)
             except ValueError as exc:
@@ -488,7 +934,8 @@ class EngineSession:
                 Mode.RP,
                 action_provider=lambda action=action: action,
             )
-            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state)
+            self.selected_facility_id = _normalize_facility_id(self.snapshot_state, self.selected_facility_id)
+            return HTTPStatus.OK, serialize_snapshot(self.snapshot_state, selected_facility_id=self.selected_facility_id)
 
 
 class UIRequestHandler(BaseHTTPRequestHandler):
@@ -599,10 +1046,12 @@ def build_action(payload: dict[str, Any]) -> PlayerAction:
     raise ValueError('지원하지 않는 행동이다.')
 
 
-def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
+def serialize_snapshot(snapshot: WorldSnapshot, selected_facility_id: str | None = None) -> dict[str, Any]:
     settlement_state = snapshot.settlement_state
     settlement_definition = snapshot.settlement_definition
     presentation_state = snapshot.presentation_state
+    normalized_facility_id = _normalize_facility_id(snapshot, selected_facility_id)
+    facility_view = _build_facility_view(snapshot, normalized_facility_id)
     chronicle_query = build_chronicle_query(snapshot)
     world_summary = build_world_summary_snapshot(snapshot)
     player_timeline = get_player_timeline(snapshot, limit=4)
@@ -630,6 +1079,16 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
     continent_comparison_result = compare_continents(snapshot, continent_ids[:2] or continent_ids)
     recent_saves = list_recent_save_slots()
     interaction_choices = list(get_player_interaction_choices())
+    facilities = [
+        {
+            'facility_id': facility.facility_id,
+            'label': facility.label,
+            'facility_type': facility.facility_type,
+            'enabled': facility.enabled,
+        }
+        for facility in settlement_definition.facilities
+        if facility.enabled
+    ]
     special_npc_state_lines = [
         f"{npc_id}: {state.status} ({state.linked_settlement_id or 'unlinked'})"
         for npc_id, state in sorted(snapshot.special_npc_states.items())
@@ -710,6 +1169,11 @@ def serialize_snapshot(snapshot: WorldSnapshot) -> dict[str, Any]:
         'tick': settlement_state.tick,
         'time_phase': settlement_state.time_phase,
         'player_location': settlement_state.player_location,
+        'settlement_flavor_title': settlement_definition.flavor.title,
+        'settlement_flavor_summary': settlement_definition.flavor.summary,
+        'facilities': facilities,
+        'selected_facility_id': normalized_facility_id,
+        'facility_view': facility_view,
         'available_locations': available_locations,
         'available_settlements': available_settlements,
         'present_npcs': [
