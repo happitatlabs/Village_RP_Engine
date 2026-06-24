@@ -216,18 +216,25 @@ HTML_PAGE = r"""
       --danger: #d08f7c;
     }
     * { box-sizing: border-box; }
+    html {
+      min-height: 100%;
+    }
     body {
       margin: 0;
       background: linear-gradient(180deg, #0f1113 0%, #15181b 100%);
       color: var(--text);
       font: 15px/1.5 Georgia, "Times New Roman", serif;
+      min-height: 100svh;
+      overflow-x: hidden;
     }
     .app {
-      max-width: 1100px;
+      width: min(100%, 1180px);
       margin: 0 auto;
-      padding: 20px;
+      min-height: 100svh;
+      padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
       display: grid;
-      gap: 16px;
+      gap: clamp(10px, 1.6vmin, 16px);
+      align-content: start;
     }
     .panel {
       background: var(--panel);
@@ -247,9 +254,10 @@ HTML_PAGE = r"""
     }
     .grid {
       display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 16px;
+      grid-template-columns: minmax(0, 1.75fr) minmax(260px, 0.8fr);
+      gap: clamp(10px, 1.6vmin, 16px);
       align-items: start;
+      min-height: 0;
     }
     .main-panel {
       display: grid;
@@ -391,6 +399,44 @@ HTML_PAGE = r"""
     .surface-detail summary {
       font-size: 15px;
     }
+    @media (orientation: landscape) and (max-height: 720px) {
+      body {
+        font-size: 14px;
+      }
+      .app {
+        height: 100svh;
+        overflow: hidden;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .grid {
+        align-items: stretch;
+        overflow: hidden;
+      }
+      .main-panel,
+      .controls {
+        min-height: 0;
+        max-height: 100%;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+      }
+      .summary strong {
+        font-size: 18px;
+      }
+      .panel {
+        padding: 12px;
+      }
+      .facility-view,
+      .mini-card {
+        padding: 10px;
+      }
+      h1 { font-size: 19px; }
+      h2 { font-size: 16px; }
+    }
+    @media (orientation: portrait) {
+      .app {
+        width: min(100%, 540px);
+      }
+    }
     @media (max-width: 820px) {
       .app {
         padding: 12px;
@@ -414,6 +460,27 @@ HTML_PAGE = r"""
       }
       .facility-view {
         padding: 12px;
+      }
+    }
+    @media (max-width: 480px) and (orientation: portrait) {
+      body {
+        font-size: 14px;
+      }
+      .app {
+        padding: 10px;
+      }
+      .summary strong {
+        font-size: 18px;
+      }
+      .button-row {
+        gap: 8px;
+      }
+      button {
+        min-height: 46px;
+        padding: 8px 10px;
+      }
+      .mini-card {
+        padding: 10px;
       }
     }
   </style>
@@ -496,7 +563,7 @@ HTML_PAGE = r"""
       </div>
 
       <div class="controls">
-        <div class="panel">
+        <div class="panel" id="actionPanel" hidden>
           <h2>행동</h2>
           <div class="section" id="waitSection">
             <h3>대기</h3>

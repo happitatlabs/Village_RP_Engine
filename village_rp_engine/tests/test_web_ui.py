@@ -141,6 +141,17 @@ def test_web_ui_errors_use_centered_guidance_popup() -> None:
     assert "showGuidancePopup(data.error || '요청 처리 중 오류가 발생했다.')" in HTML_PAGE
 
 
+def test_action_panel_is_hidden_from_player_surface() -> None:
+    assert '<div class="panel" id="actionPanel" hidden>' in HTML_PAGE
+
+
+def test_web_ui_has_landscape_and_portrait_viewport_layout_rules() -> None:
+    assert 'min-height: 100svh;' in HTML_PAGE
+    assert '@media (orientation: landscape) and (max-height: 720px)' in HTML_PAGE
+    assert '@media (orientation: portrait)' in HTML_PAGE
+    assert '@media (max-width: 480px) and (orientation: portrait)' in HTML_PAGE
+
+
 def test_tutorial_surface_progresses_through_talk_move_and_archive() -> None:
     world_engine = build_world_engine()
     snapshot = create_default_world_snapshot()
