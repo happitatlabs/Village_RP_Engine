@@ -12,6 +12,7 @@ val generatedPythonDir = layout.buildDirectory.dir("generated/python")
 val syncPythonSources by tasks.registering(Sync::class) {
     from(repoRoot.file("web_ui.py"))
     from(repoRoot.dir("village_rp_engine")) {
+        into("village_rp_engine")
         exclude("tests/**")
         exclude("**/__pycache__/**")
         exclude("**/*.pyc")
