@@ -131,6 +131,14 @@ def test_serialize_snapshot_includes_facility_surface() -> None:
     assert any('에단이 쓰러져 있던 너를 회색언덕으로 데려왔다.' in line for card in payload['facility_view']['cards'] for line in card['lines'])
     assert 'id="overviewCards"' in HTML_PAGE
     assert 'id="waitSection"' in HTML_PAGE
+    assert HTML_PAGE.index('id="facilityTitle"') < HTML_PAGE.index('id="facilityButtons"')
+
+
+def test_web_ui_errors_use_centered_guidance_popup() -> None:
+    assert 'class="guidance-backdrop"' in HTML_PAGE
+    assert 'id="guidancePopup"' in HTML_PAGE
+    assert 'function showGuidancePopup(message)' in HTML_PAGE
+    assert "showGuidancePopup(data.error || '요청 처리 중 오류가 발생했다.')" in HTML_PAGE
 
 
 def test_tutorial_surface_progresses_through_talk_move_and_archive() -> None:
@@ -395,7 +403,10 @@ def test_facility_hints_explain_square_only_access_from_tavern() -> None:
 
     payload = serialize_snapshot(snapshot, selected_facility_id='tavern')
 
-    assert any('기록관으로 이동해야 기록을 살펴볼 수 있다.' == hint for hint in payload['facility_hints'])
+    assert [facility['facility_id'] for facility in payload['facilities']] == ['square']
+    assert payload['facilities'][0]['display_label'] == '광장으로 이동'
+    assert payload['available_locations'] == ['광장']
+    assert payload['facility_hints'] == ['다른 시설을 보려면 광장으로 돌아가야 한다.']
 
 
 def test_inaccessible_location_facility_button_moves_first() -> None:
@@ -425,13 +436,29 @@ def test_archive_and_base_facility_buttons_move_to_locations_first() -> None:
     assert status == 200
     assert archive_payload['selected_facility_id'] == 'archive'
     assert archive_payload['facility_view']['title'] == '기록관'
+    assert [facility['facility_id'] for facility in archive_payload['facilities']] == ['square']
 
+    status, _ = session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    assert status == 200
+    base_button = next(facility for facility in session.snapshot()['facilities'] if facility['facility_id'] == 'base')
     status, base_payload = session.apply_action(base_button['action_payload'])
     assert status == 200
     assert base_payload['selected_facility_id'] == 'base'
     assert base_payload['facility_view']['title'] == '거점'
     assert any('에단' in line for line in base_payload['facility_view']['summary_lines'])
     assert any(card['title'] == '에단의 자리' for card in base_payload['facility_view']['cards'])
+
+
+def test_web_ui_rejects_direct_facility_move_without_returning_to_square() -> None:
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '기록관'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'archive'
+
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '거점'})
+    assert status == 400
+    assert payload['error'] == '다른 시설을 보려면 먼저 광장으로 돌아가야 한다.'
 
 
 def test_tavern_blocks_direct_entry_to_square_only_facilities() -> None:
@@ -522,6 +549,35 @@ def test_narration_is_prioritized_in_overview_and_square_cards() -> None:
     assert payload['facility_view']['cards'][0]['title'] == '나레이션'
 
 
+def test_situation_card_matches_current_non_square_location() -> None:
+    session = EngineSession()
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '뒷골목'})
+    assert status == 200
+
+    snapshot = replace(
+        session.snapshot_state,
+        presentation_state=replace(
+            session.snapshot_state.presentation_state,
+            visible_scenes=('농부가 광장에서 어젯밤 말다툼을 곱씹었다.',),
+            dialogues=(PresentationDialogue(speaker_id='farmer', speaker_name='농부', text='광장 이야기가 아직 남았군.'),),
+        ),
+    )
+    payload = serialize_snapshot(snapshot, selected_facility_id='back_alley')
+    situation_card = next(card for card in payload['overview_cards'] if card['title'] == '현재 상황')
+    situation_text = '\n'.join(situation_card['lines'])
+
+    assert '골목' in situation_text
+    assert '광장' not in situation_text
+    assert '농부' not in situation_text
+
+
+def test_system_scene_and_log_sections_are_collapsed_by_default() -> None:
+    assert '<summary>시스템 보기: 장면과 대화</summary>' in HTML_PAGE
+    assert '<details class="surface-detail" open>' not in HTML_PAGE
+    assert '<summary>개발자 로그: World Log</summary>' in HTML_PAGE
+    assert '<details open>\n            <summary>개발자 로그: World Log</summary>' not in HTML_PAGE
+
+
 def test_web_ui_facility_surface_differs_by_settlement_flavor() -> None:
     session = EngineSession()
 
@@ -538,8 +594,8 @@ def test_web_ui_facility_surface_differs_by_settlement_flavor() -> None:
     session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('town_1'))
     session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.move('시장'))
     town_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='market')
-    assert any(facility['facility_id'] == 'market' for facility in town_payload['facilities'])
     assert town_payload['facility_view']['title'] == '시장'
+    assert [facility['facility_id'] for facility in town_payload['facilities']] == ['square']
     assert '상업 중심' in town_payload['settlement_flavor_title']
 
 

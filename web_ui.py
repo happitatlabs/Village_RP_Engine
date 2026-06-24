@@ -360,6 +360,29 @@ HTML_PAGE = r"""
       font-size: 13px;
       min-height: 18px;
     }
+    .guidance-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.62);
+    }
+    .guidance-dialog {
+      width: min(420px, 100%);
+      background: #1b1e23;
+      border: 1px solid var(--accent);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+      padding: 18px;
+    }
+    .guidance-dialog h2 {
+      margin-bottom: 12px;
+    }
+    .guidance-dialog p {
+      margin: 0 0 16px;
+      line-height: 1.55;
+    }
     [hidden] { display: none !important; }
     .surface-detail {
       border-top: 1px solid var(--line);
@@ -414,11 +437,6 @@ HTML_PAGE = r"""
     <div class="grid">
       <div class="panel main-panel">
         <div class="story-stack" id="overviewCards"></div>
-        <div class="section">
-          <h2>시설</h2>
-          <div class="button-row tight" id="facilityButtons"></div>
-          <ul class="hint" id="facilityHints"></ul>
-        </div>
         <div class="facility-view">
           <div>
             <h2 id="facilityTitle">광장</h2>
@@ -429,8 +447,13 @@ HTML_PAGE = r"""
           <div class="card-list" id="facilityCards"></div>
           <div class="card-list" id="facilityNpcCards"></div>
         </div>
-        <details class="surface-detail" open>
-          <summary>장면과 대화</summary>
+        <div class="section">
+          <h2>시설</h2>
+          <div class="button-row tight" id="facilityButtons"></div>
+          <ul class="hint" id="facilityHints"></ul>
+        </div>
+        <details class="surface-detail">
+          <summary>시스템 보기: 장면과 대화</summary>
           <div class="section">
             <h2>Visible Scenes</h2>
             <ul id="scenes"></ul>
@@ -507,8 +530,8 @@ HTML_PAGE = r"""
         </div>
 
         <div class="panel">
-          <details open>
-            <summary>World Log</summary>
+          <details>
+            <summary>개발자 로그: World Log</summary>
             <pre id="worldLog"></pre>
           </details>
           <details>
@@ -524,6 +547,16 @@ HTML_PAGE = r"""
             <pre id="chronicleLog"></pre>
           </details>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="guidance-backdrop" id="guidancePopup" hidden role="dialog" aria-modal="true" aria-labelledby="guidanceTitle">
+    <div class="guidance-dialog">
+      <h2 id="guidanceTitle">안내</h2>
+      <p id="guidanceMessage"></p>
+      <div class="button-row">
+        <button id="guidanceCloseButton" type="button">확인</button>
       </div>
     </div>
   </div>
@@ -550,6 +583,28 @@ HTML_PAGE = r"""
     const moveSection = document.getElementById('moveSection');
     const talkSection = document.getElementById('talkSection');
     const choiceSection = document.getElementById('choiceSection');
+    const guidancePopup = document.getElementById('guidancePopup');
+    const guidanceMessage = document.getElementById('guidanceMessage');
+    const guidanceCloseButton = document.getElementById('guidanceCloseButton');
+
+    function showGuidancePopup(message) {
+      const text = message || '요청 처리 중 오류가 발생했다.';
+      errorText.textContent = text;
+      guidanceMessage.textContent = text;
+      guidancePopup.hidden = false;
+      guidanceCloseButton.focus();
+    }
+
+    function hideGuidancePopup() {
+      guidancePopup.hidden = true;
+    }
+
+    guidanceCloseButton.onclick = hideGuidancePopup;
+    guidancePopup.onclick = (event) => {
+      if (event.target === guidancePopup) {
+        hideGuidancePopup();
+      }
+    };
 
     function renderList(id, items, formatter) {
       const target = document.getElementById(id);
@@ -769,7 +824,7 @@ HTML_PAGE = r"""
       });
       const data = await response.json();
       if (!response.ok) {
-        errorText.textContent = data.error || '요청 처리 중 오류가 발생했다.';
+        showGuidancePopup(data.error || '요청 처리 중 오류가 발생했다.');
         return;
       }
       renderState(data);
@@ -789,7 +844,7 @@ HTML_PAGE = r"""
       });
       const data = await response.json();
       if (!response.ok) {
-        errorText.textContent = data.error || '저장 중 오류가 발생했다.';
+        showGuidancePopup(data.error || '저장 중 오류가 발생했다.');
         return;
       }
       renderState(data);
@@ -807,7 +862,7 @@ HTML_PAGE = r"""
       });
       const data = await response.json();
       if (!response.ok) {
-        errorText.textContent = data.error || '불러오기 중 오류가 발생했다.';
+        showGuidancePopup(data.error || '불러오기 중 오류가 발생했다.');
         return;
       }
       renderState(data);
@@ -1398,21 +1453,66 @@ def _build_narration_card(snapshot: WorldSnapshot) -> dict[str, Any] | None:
     }
 
 
+def _current_location_situation_lines(snapshot: WorldSnapshot) -> list[str]:
+    location = snapshot.settlement_state.player_location
+    if not location or location == '광장':
+        return []
+
+    location_lines = {
+        '술집': [
+            '술집 안에서는 공개 소문과 사람들의 목소리가 오간다.',
+            '사람들이 흘리는 말 사이에서 마을의 분위기가 드러난다.',
+        ],
+        '뒷골목': [
+            '밝은 자리에서는 잘 나오지 않는 이야기가 이곳에 고인다.',
+            '발소리와 낮은 목소리가 골목 안쪽에서 얽힌다.',
+        ],
+        '기록관': [
+            '기록관에는 사람들이 남긴 말과 사건의 흔적이 조용히 쌓인다.',
+            '지금은 기록을 읽고 흐름을 정리하기 좋은 자리다.',
+        ],
+        '거점': [
+            '에단의 짐이 놓인 작은 거점에서 하루를 정리할 수 있다.',
+            '길을 떠날 준비와 휴식이 이곳에서 이어진다.',
+        ],
+        '시장': [
+            '상인들의 목소리와 오가는 물건 사이로 시장의 기색이 드러난다.',
+            '거래 이야기가 사람들의 표정을 바쁘게 만든다.',
+        ],
+        '치료소': [
+            '치료소에는 여행자와 환자들이 남긴 낮은 목소리가 머문다.',
+            '약재와 회복에 관한 이야기가 조심스럽게 오간다.',
+        ],
+        '대장간': [
+            '대장간에는 쇠를 두드리는 소리와 짧은 소문이 함께 울린다.',
+            '불빛과 연기 사이에서 사람들의 기색이 읽힌다.',
+        ],
+        '창고': [
+            '창고 주변에는 물건을 나르는 발소리와 낮은 말들이 남는다.',
+            '겉으로 드러나지 않는 움직임이 이곳에 쌓인다.',
+        ],
+    }
+    lines = list(location_lines.get(location, [f'{location}에 머무르며 주변의 기색을 살피고 있다.']))
+    lines.append(f'분위기: {_stress_label(snapshot.settlement_state.stress)}')
+    return lines
+
+
 def _build_situation_card(snapshot: WorldSnapshot) -> dict[str, Any]:
-    lines: list[str] = []
-    primary_narration = _get_primary_narration_line(snapshot)
-    if primary_narration is not None:
-        _append_unique_line(lines, f'나레이션: {primary_narration}')
-    if snapshot.presentation_state.visible_scenes:
-        _append_unique_line(lines, _player_surface_text_or_none(snapshot, snapshot.presentation_state.visible_scenes[0]))
-    if snapshot.presentation_state.dialogues:
-        dialogue = snapshot.presentation_state.dialogues[0]
-        dialogue_text = _format_dialogue_text_for_player(snapshot, dialogue.speaker_id, dialogue.text)
-        if dialogue_text is not None:
-            _append_unique_line(lines, f'{dialogue.speaker_name}: {dialogue_text}')
-    if snapshot.presentation_state.triggered_event_summaries:
-        _append_unique_line(lines, _player_surface_text_or_none(snapshot, snapshot.presentation_state.triggered_event_summaries[0].outcome_text))
-    lines = [line for line in lines if not _is_raw_state_entry_text(line)]
+    lines: list[str] = _current_location_situation_lines(snapshot)
+    if not lines:
+        primary_narration = _get_primary_narration_line(snapshot)
+        if primary_narration is not None:
+            _append_unique_line(lines, f'나레이션: {primary_narration}')
+        if snapshot.presentation_state.visible_scenes:
+            _append_unique_line(lines, _player_surface_text_or_none(snapshot, snapshot.presentation_state.visible_scenes[0]))
+        if snapshot.presentation_state.dialogues:
+            dialogue = snapshot.presentation_state.dialogues[0]
+            dialogue_text = _format_dialogue_text_for_player(snapshot, dialogue.speaker_id, dialogue.text)
+            if dialogue_text is not None:
+                _append_unique_line(lines, f'{dialogue.speaker_name}: {dialogue_text}')
+        if snapshot.presentation_state.triggered_event_summaries:
+            _append_unique_line(lines, _player_surface_text_or_none(snapshot, snapshot.presentation_state.triggered_event_summaries[0].outcome_text))
+        lines = [line for line in lines if not _is_raw_state_entry_text(line)]
     if not lines:
         recent_entries = build_chronicle_query(snapshot).query_entries(settlement_id=snapshot.active_settlement_id, limit=2).entries
         lines.extend(filter_player_facing_entries(recent_entries, snapshot))
@@ -1807,6 +1907,12 @@ class EngineSession:
                 return HTTPStatus.BAD_REQUEST, {'error': f'이미 {settlement_state.player_location}에 있다.'}
             if action.action_type == 'move' and action.target_location not in settlement_definition.locations:
                 return HTTPStatus.BAD_REQUEST, {'error': '이동할 수 없는 장소다.'}
+            if (
+                action.action_type == 'move'
+                and settlement_state.player_location != '광장'
+                and action.target_location != '광장'
+            ):
+                return HTTPStatus.BAD_REQUEST, {'error': '다른 시설을 보려면 먼저 광장으로 돌아가야 한다.'}
             available_choice_ids = {
                 choice['choice_id']
                 for choice in _build_available_interaction_choices(self.snapshot_state, self.selected_facility_id)
@@ -1972,7 +2078,11 @@ def serialize_snapshot(
     active_region_id = settlement_definition.region_id
     active_region_definition = snapshot.region_definitions.get(active_region_id)
     active_continent_id = active_region_definition.continent_id if active_region_definition is not None else None
-    available_locations = [location for location in settlement_definition.locations if location != '집']
+    current_location = settlement_state.player_location or ''
+    if current_location and current_location != '광장':
+        available_locations = ['광장'] if '광장' in settlement_definition.locations else []
+    else:
+        available_locations = [location for location in settlement_definition.locations if location != '집']
     available_settlements = [
         settlement_id
         for settlement_id in snapshot.settlement_definitions
@@ -2003,8 +2113,13 @@ def serialize_snapshot(
         }
         for item in list_recent_save_slots()
     ]
+    facility_definitions = [facility for facility in settlement_definition.facilities if facility.enabled]
+    if current_location and current_location != '광장':
+        square_facility = next((facility for facility in facility_definitions if facility.facility_id == 'square'), None)
+        facility_definitions = [square_facility] if square_facility is not None else []
+
     facilities = []
-    for facility in settlement_definition.facilities:
+    for facility in facility_definitions:
         if not facility.enabled:
             continue
         accessible = _can_access_facility_from_current_location(snapshot, facility.facility_id)
