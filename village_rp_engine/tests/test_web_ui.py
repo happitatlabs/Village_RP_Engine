@@ -125,6 +125,8 @@ def test_serialize_snapshot_includes_facility_surface() -> None:
     assert payload['facility_view']['title'] == '광장'
     assert 'cards' in payload['facility_view']
     assert 'npc_cards' in payload['facility_view']
+    assert any(line.startswith('분위기:') for line in payload['facility_view']['summary_lines'])
+    assert all(not line.startswith('불안:') for line in payload['facility_view']['summary_lines'])
     assert payload['settlement_flavor_title'] == '회색언덕 마을'
     assert any('에단이 쓰러져 있던 너를 회색언덕으로 데려왔다.' in line for card in payload['facility_view']['cards'] for line in card['lines'])
     assert 'id="overviewCards"' in HTML_PAGE
@@ -145,11 +147,41 @@ def test_tutorial_surface_progresses_through_talk_move_and_archive() -> None:
 
     session = EngineSession()
     session.snapshot_state = snapshot
-    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+    session.selected_facility_id = 'square'
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '기록관'})
 
     assert status == 200
+    assert payload['selected_facility_id'] == 'archive'
     assert session.snapshot_state.interaction_runtime_state.tutorial_stage == 'wait_in_square'
     assert any(card['title'] == '튜토리얼 4' for card in payload['overview_cards'])
+
+
+def test_tutorial_ethan_dialogue_points_to_tavern() -> None:
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'talk', 'target_npc_id': 'ethan'})
+
+    assert status == 200
+    situation_card = next(card for card in payload['overview_cards'] if card['title'] == '현재 상황')
+    dialogue_lines = [dialogue['text'] for dialogue in payload['dialogues'] if dialogue['speaker_id'] == 'ethan']
+    assert any('술집' in line for line in situation_card['lines'])
+    assert any('술집' in line for line in dialogue_lines)
+    assert any(card['title'] == '튜토리얼 2' for card in payload['overview_cards'])
+
+
+def test_tutorial_card_disappears_after_completion() -> None:
+    session = EngineSession()
+
+    session.apply_action({'action_type': 'talk', 'target_npc_id': 'ethan'})
+    session.apply_action({'action_type': 'move', 'target_location': '술집'})
+    session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    session.apply_action({'action_type': 'move', 'target_location': '기록관'})
+    session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    status, payload = session.apply_action({'action_type': 'wait'})
+
+    assert status == 200
+    assert session.snapshot_state.interaction_runtime_state.tutorial_completed is True
+    assert all(not card['title'].startswith('튜토리얼') for card in payload['overview_cards'])
 
 
 def test_square_facility_formats_notice_lines_without_notice_text_field() -> None:
@@ -226,6 +258,7 @@ def test_archive_prioritizes_story_history_over_numeric_state_dump() -> None:
     world_engine = build_world_engine()
     snapshot = create_default_world_snapshot()
     snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.wait())
+    snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.move('기록관'))
 
     payload = serialize_snapshot(snapshot, selected_facility_id='archive')
     cards = payload['facility_view']['cards']
@@ -238,6 +271,7 @@ def test_archive_prioritizes_story_history_over_numeric_state_dump() -> None:
 
 def test_player_surface_filters_raw_state_markers_from_default_cards() -> None:
     snapshot = create_default_world_snapshot()
+    snapshot = build_world_engine().run_step(snapshot, Mode.RP, action=PlayerAction.move('기록관'))
     raw_entries = (
         ChronicleEntry(
             entry_type='state',
@@ -361,7 +395,7 @@ def test_facility_hints_explain_square_only_access_from_tavern() -> None:
 
     payload = serialize_snapshot(snapshot, selected_facility_id='tavern')
 
-    assert any('기록관은 광장에서 들어갈 수 있다.' == hint for hint in payload['facility_hints'])
+    assert any('기록관으로 이동해야 기록을 살펴볼 수 있다.' == hint for hint in payload['facility_hints'])
 
 
 def test_inaccessible_location_facility_button_moves_first() -> None:
@@ -374,6 +408,30 @@ def test_inaccessible_location_facility_button_moves_first() -> None:
     assert market_button['display_label'] == '시장으로 이동'
     assert market_button['disabled'] is False
     assert market_button['action_payload'] == {'action_type': 'move', 'target_location': '시장'}
+
+
+def test_archive_and_base_facility_buttons_move_to_locations_first() -> None:
+    session = EngineSession()
+    payload = session.snapshot()
+    archive_button = next(facility for facility in payload['facilities'] if facility['facility_id'] == 'archive')
+    base_button = next(facility for facility in payload['facilities'] if facility['facility_id'] == 'base')
+
+    assert archive_button['display_label'] == '기록관으로 이동'
+    assert archive_button['action_payload'] == {'action_type': 'move', 'target_location': '기록관'}
+    assert base_button['display_label'] == '거점으로 이동'
+    assert base_button['action_payload'] == {'action_type': 'move', 'target_location': '거점'}
+
+    status, archive_payload = session.apply_action(archive_button['action_payload'])
+    assert status == 200
+    assert archive_payload['selected_facility_id'] == 'archive'
+    assert archive_payload['facility_view']['title'] == '기록관'
+
+    status, base_payload = session.apply_action(base_button['action_payload'])
+    assert status == 200
+    assert base_payload['selected_facility_id'] == 'base'
+    assert base_payload['facility_view']['title'] == '거점'
+    assert any('에단' in line for line in base_payload['facility_view']['summary_lines'])
+    assert any(card['title'] == '에단의 자리' for card in base_payload['facility_view']['cards'])
 
 
 def test_tavern_blocks_direct_entry_to_square_only_facilities() -> None:
@@ -433,8 +491,9 @@ def test_square_intro_story_card_expires_and_moves_to_archive_background() -> No
     payload = session.snapshot()
     assert all(card['title'] != '회색언덕의 시작' for card in payload['facility_view']['cards'])
 
-    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '기록관'})
     assert status == 200
+    assert payload['selected_facility_id'] == 'archive'
     assert any(card['title'] == '배경 설명' for card in payload['facility_view']['cards'])
 
 
@@ -485,7 +544,7 @@ def test_web_ui_facility_surface_differs_by_settlement_flavor() -> None:
 
 
 def test_web_ui_archive_surface_exposes_mvp_recording_frame() -> None:
-    snapshot = create_default_world_snapshot()
+    snapshot = build_world_engine().run_step(create_default_world_snapshot(), Mode.RP, action=PlayerAction.move('기록관'))
 
     payload = serialize_snapshot(snapshot, selected_facility_id='archive')
 
@@ -497,7 +556,7 @@ def test_engine_session_keeps_facility_on_load_and_resets_to_square(tmp_path, mo
     monkeypatch.setattr(world_engine_module, 'SAVE_DIR', tmp_path / 'saves')
     session = EngineSession()
 
-    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '기록관'})
     assert status == 200
     assert payload['selected_facility_id'] == 'archive'
 

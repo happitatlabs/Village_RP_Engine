@@ -82,8 +82,8 @@ def build_facilities(
         )
     facilities.extend(
         (
-            FacilityDefinition('archive', '기록관', 'chronicle'),
-            FacilityDefinition('base', '거점', 'safehouse'),
+            FacilityDefinition('archive', '기록관', 'chronicle', target_location='기록관'),
+            FacilityDefinition('base', '거점', 'safehouse', target_location='거점'),
             FacilityDefinition('outside', '도시 밖으로', 'travel'),
         )
     )
@@ -161,7 +161,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             settlement_id='village_2',
             region_id='north_fields',
             npc_ids=('farmer', 'innkeeper', 'village_elder', 'guard_captain'),
-            locations=('광장', '술집', '뒷골목', '창고', '집'),
+            locations=('광장', '술집', '뒷골목', '기록관', '거점', '창고', '집'),
             schedules=village_2_schedules,
             event_definitions=village_2_events,
             economy_profile=EconomyProfile(values={'grain': 110, 'iron': 4}),
@@ -182,7 +182,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             settlement_id='town_1',
             region_id='river_trade',
             npc_ids=('blacksmith', 'innkeeper', 'village_elder', 'guard_captain'),
-            locations=('광장', '대장간', '술집', '뒷골목', '시장', '집'),
+            locations=('광장', '대장간', '술집', '뒷골목', '기록관', '거점', '시장', '집'),
             schedules=town_1_schedules,
             event_definitions=town_1_events,
             economy_profile=EconomyProfile(values={'grain': 60, 'iron': 55, 'trade': 40}),

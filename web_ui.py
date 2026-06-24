@@ -158,7 +158,7 @@ TUTORIAL_STAGE_UI = {
         'subtitle': '기록을 읽는 법',
         'lines': (
             '이제 광장으로 돌아가 기록관을 방문해 보자.',
-            '기록관은 광장에서 들어갈 수 있다.',
+            '기록관으로 이동해야 기록을 살펴볼 수 있다.',
             '소문과 사건은 기록으로 이어질 때 비로소 흐름이 된다.',
         ),
     },
@@ -180,6 +180,10 @@ TUTORIAL_STAGE_UI = {
     },
 }
 TUTORIAL_STAGE_SEQUENCE = ('talk_ethan', 'visit_tavern', 'visit_archive', 'wait_in_square', 'complete')
+TUTORIAL_ETHAN_TAVERN_GUIDE = (
+    '네가 깨어난 일은 광장 사람들이 봤지만, 진짜 이야기는 술집에서 먼저 돈다. '
+    '거기서 사람들 입에 오르는 말을 들어봐.'
+)
 
 FACILITY_CONTROL_VISIBILITY = {
     'square': {'wait': True, 'travel': False, 'move': True, 'talk': True, 'choice': True},
@@ -855,7 +859,7 @@ def _facility_access_hint(snapshot: WorldSnapshot, facility_id: str) -> str:
     if facility.facility_id == 'square':
         return '다른 시설을 보려면 광장으로 돌아가야 한다.'
     if facility.facility_id == 'archive':
-        return '기록관은 광장에서 들어갈 수 있다.'
+        return '기록관으로 이동해야 기록을 살펴볼 수 있다.'
     if facility.facility_id == 'back_alley':
         return '뒷골목으로 이동해야 조사할 수 있다.'
     if facility.facility_id == 'market':
@@ -864,7 +868,7 @@ def _facility_access_hint(snapshot: WorldSnapshot, facility_id: str) -> str:
         return '도시 밖으로 나가려면 먼저 광장으로 돌아가야 한다.'
     if facility.target_location is not None:
         return f'{facility.label}(으)로 이동해야 이용할 수 있다.'
-    return f'{facility.label}은 광장에서 들어갈 수 있다.'
+    return f'{facility.label}(으)로 이동해야 이용할 수 있다.'
 
 
 def _resolve_default_facility_for_current_location(snapshot: WorldSnapshot) -> str:
@@ -973,12 +977,18 @@ def _player_surface_text_or_none(snapshot: WorldSnapshot, text: str) -> str | No
     return localized
 
 
+def _format_dialogue_text_for_player(snapshot: WorldSnapshot, speaker_id: str, text: str) -> str | None:
+    if speaker_id == 'ethan' and snapshot.interaction_runtime_state.tutorial_stage == 'visit_tavern':
+        return TUTORIAL_ETHAN_TAVERN_GUIDE
+    return _player_surface_text_or_none(snapshot, text)
+
+
 def _status_summary_lines(snapshot: WorldSnapshot) -> list[str]:
     state = snapshot.settlement_state
     return [
         f'정착지: {format_settlement_name(snapshot, snapshot.active_settlement_id)}',
         f'치안: {_security_label(state.security)}',
-        f'불안: {_stress_label(state.stress)}',
+        f'분위기: {_stress_label(state.stress)}',
         _stress_context_sentence(state.stress),
         f"현재 위치: {state.player_location or '미정'}",
     ]
@@ -1009,7 +1019,7 @@ def format_settlement_mood(snapshot: WorldSnapshot) -> list[str]:
     state = snapshot.settlement_state
     return [
         f'치안: {_security_label(state.security)}',
-        f'불안: {_stress_label(state.stress)}',
+        f'분위기: {_stress_label(state.stress)}',
         _stress_context_sentence(state.stress),
     ]
 
@@ -1345,7 +1355,9 @@ def _build_intro_card(snapshot: WorldSnapshot) -> dict[str, Any] | None:
     }
 
 
-def _build_tutorial_card(snapshot: WorldSnapshot) -> dict[str, Any]:
+def _build_tutorial_card(snapshot: WorldSnapshot) -> dict[str, Any] | None:
+    if snapshot.interaction_runtime_state.tutorial_completed:
+        return None
     stage = snapshot.interaction_runtime_state.tutorial_stage
     stage_meta = TUTORIAL_STAGE_UI.get(stage, TUTORIAL_STAGE_UI['complete'])
     stage_index = min(TUTORIAL_STAGE_SEQUENCE.index(stage) + 1, len(TUTORIAL_STAGE_SEQUENCE)) if stage in TUTORIAL_STAGE_SEQUENCE else len(TUTORIAL_STAGE_SEQUENCE)
@@ -1395,7 +1407,7 @@ def _build_situation_card(snapshot: WorldSnapshot) -> dict[str, Any]:
         _append_unique_line(lines, _player_surface_text_or_none(snapshot, snapshot.presentation_state.visible_scenes[0]))
     if snapshot.presentation_state.dialogues:
         dialogue = snapshot.presentation_state.dialogues[0]
-        dialogue_text = _player_surface_text_or_none(snapshot, dialogue.text)
+        dialogue_text = _format_dialogue_text_for_player(snapshot, dialogue.speaker_id, dialogue.text)
         if dialogue_text is not None:
             _append_unique_line(lines, f'{dialogue.speaker_name}: {dialogue_text}')
     if snapshot.presentation_state.triggered_event_summaries:
@@ -1421,7 +1433,9 @@ def _build_overview_cards(snapshot: WorldSnapshot) -> list[dict[str, Any]]:
     if intro_card is not None:
         cards.append(intro_card)
     cards.append(_build_situation_card(snapshot))
-    cards.append(_build_tutorial_card(snapshot))
+    tutorial_card = _build_tutorial_card(snapshot)
+    if tutorial_card is not None:
+        cards.append(tutorial_card)
     return cards
 
 
@@ -1597,6 +1611,11 @@ def _build_facility_view(snapshot: WorldSnapshot, selected_facility_id: str) -> 
         view['title'] = '기록관'
         view['description'] = flavor.archive_intro or '사건과 정착지의 흐름을 기록 단위로 읽는다.'
         view['summary_lines'] = [*base_summary, f"최근 기록 수: {chronicle_query.query_entries(limit=6).total_count}"]
+        view['actions'] = (
+            [{'label': '기록관으로 이동', 'payload': {'action_type': 'move', 'target_location': '기록관'}}]
+            if settlement_state.player_location != '기록관'
+            else []
+        )
         view['cards'] = _build_archive_cards(snapshot)
     elif selected_facility_id == 'base':
         recent_saves = list_recent_save_slots()
@@ -1605,16 +1624,32 @@ def _build_facility_view(snapshot: WorldSnapshot, selected_facility_id: str) -> 
             for item in recent_saves[:3]
         ] or ['최근 저장 기록이 없다.']
         view['title'] = '거점'
-        view['description'] = '저장, 불러오기, 휴식, 현재 상태를 정리하는 안전한 메뉴다.'
-        view['summary_lines'] = [*base_summary, f"최근 선택: {snapshot.interaction_runtime_state.last_choice_id or '없음'}"]
-        view['actions'] = [
-            {'label': '휴식', 'payload': {'action_type': 'wait'}},
-            {'label': '저장', 'payload': {'client_action': 'save'}},
-            {'label': '불러오기', 'payload': {'client_action': 'load'}},
-            {'label': '리셋', 'payload': {'client_action': 'reset'}, 'secondary': True},
+        view['description'] = '에단과 함께 지내는 작은 거점이다. 저장, 불러오기, 휴식, 현재 상태를 정리한다.'
+        view['summary_lines'] = [
+            *base_summary,
+            '에단은 이곳에 짐을 두지만, 때로는 너와 함께 길을 오르거나 혼자 움직일 수 있다.',
+            f"최근 선택: {snapshot.interaction_runtime_state.last_choice_id or '없음'}",
         ]
+        view['actions'] = (
+            [{'label': '거점으로 이동', 'payload': {'action_type': 'move', 'target_location': '거점'}}]
+            if settlement_state.player_location != '거점'
+            else [
+                {'label': '휴식', 'payload': {'action_type': 'wait'}},
+                {'label': '저장', 'payload': {'client_action': 'save'}},
+                {'label': '불러오기', 'payload': {'client_action': 'load'}},
+                {'label': '리셋', 'payload': {'client_action': 'reset'}, 'secondary': True},
+            ]
+        )
         view['cards'] = [
             {'title': '최근 저장 슬롯', 'subtitle': 'run 관리', 'lines': save_lines},
+            {
+                'title': '에단의 자리',
+                'subtitle': '함께 머무는 사람',
+                'lines': [
+                    '거점 한쪽에는 에단이 남겨 둔 짐과 길 위에서 주워 온 낡은 끈이 놓여 있다.',
+                    '그는 너와 함께 움직일 수도 있고, 네가 머무는 동안 혼자 마을 안팎을 살필 수도 있다.',
+                ],
+            },
             {'title': '특수 인물 상태', 'subtitle': 'special NPC', 'lines': [f"{npc_id}: {state.status}" for npc_id, state in sorted(snapshot.special_npc_states.items())]},
         ]
     elif selected_facility_id == 'outside':
@@ -1797,6 +1832,10 @@ class EngineSession:
                 arrival_card = _build_travel_arrival_card(self.snapshot_state)
             else:
                 self.selected_facility_id = _normalize_selected_facility(self.snapshot_state, self.selected_facility_id)
+                self.snapshot_state = apply_tutorial_update(
+                    self.snapshot_state,
+                    selected_facility_id=self.selected_facility_id,
+                )
                 arrival_card = None
             return HTTPStatus.OK, serialize_snapshot(
                 self.snapshot_state,
@@ -2100,7 +2139,7 @@ def serialize_snapshot(
         'dialogues': [
             {'speaker_id': dialogue.speaker_id, 'speaker_name': dialogue.speaker_name, 'text': text}
             for dialogue in presentation_state.dialogues
-            if (text := _player_surface_text_or_none(snapshot, dialogue.text)) is not None
+            if (text := _format_dialogue_text_for_player(snapshot, dialogue.speaker_id, dialogue.text)) is not None
         ],
         'triggered_events': [
             {'event_id': event.event_id, 'outcome_text': line}
