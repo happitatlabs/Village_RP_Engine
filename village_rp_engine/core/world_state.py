@@ -64,8 +64,12 @@ class WorldState:
     world_log: list[str] = field(default_factory=list)
     relationships: dict[tuple[str, str], int] = field(default_factory=dict)
     player_relationships: dict[str, int] = field(default_factory=build_initial_player_relationships)
+    resident_status: dict[str, str] = field(default_factory=dict)
+    recognition_score: dict[str, int] = field(default_factory=dict)
+    recognition_blocked_until_tick: dict[str, int] = field(default_factory=dict)
     quest_status: dict[str, str] = field(default_factory=lambda: {MEDIATE_TAVERN_CONFLICT_QUEST_ID: 'not_started'})
     quest_contacts: dict[str, set[str]] = field(default_factory=lambda: {MEDIATE_TAVERN_CONFLICT_QUEST_ID: set()})
+    quest_refusal_penalty_ticks: dict[str, int] = field(default_factory=lambda: {MEDIATE_TAVERN_CONFLICT_QUEST_ID: 0})
     npc_recent_states: dict[str, list[NPCRecentState]] = field(default_factory=dict)
     player_notices: list[PlayerNotice] = field(default_factory=list)
     locked_npc_ids_for_tick: set[str] = field(default_factory=set)
@@ -75,7 +79,7 @@ class WorldState:
 
 
 def create_initial_world_state(player_location: str | None = DEFAULT_PLAYER_LOCATION) -> WorldState:
-    return WorldState(
+    state = WorldState(
         tick=0,
         day=1,
         time_phase=TIME_PHASES[0],
@@ -84,3 +88,7 @@ def create_initial_world_state(player_location: str | None = DEFAULT_PLAYER_LOCA
         player_location=player_location,
         previous_player_location=player_location,
     )
+    state.resident_status[state.settlement_id] = "outsider"
+    state.recognition_score[state.settlement_id] = 0
+    state.recognition_blocked_until_tick[state.settlement_id] = 0
+    return state

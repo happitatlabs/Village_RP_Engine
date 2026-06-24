@@ -136,22 +136,22 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
         replace(
             event_lookup['morning_chat_square'],
             probability=0.7,
-            outcome_text='village_2의 광장에서 농부가 창고 사정을 두고 아침 이야기를 나눴다.',
-            rumor_text='village_2 광장에서 창고 사정 이야기가 돌았다는 소문이 퍼졌다.',
+            outcome_text='강가마을 광장에서 농부가 창고 사정을 두고 아침 이야기를 나눴다.',
+            rumor_text='강가마을 광장에서 창고 사정 이야기가 돌았다는 소문이 퍼졌다.',
         ),
         replace(
             event_lookup['late_night_cleanup'],
             probability=0.6,
-            outcome_text='village_2의 여관주인이 늦은 밤 창고 손님 이야기까지 정리했다.',
-            rumor_text='village_2 술집에서 늦은 밤 손님 이야기가 돌았다는 말이 퍼졌다.',
+            outcome_text='강가마을 여관주인이 늦은 밤 창고 손님 이야기까지 정리했다.',
+            rumor_text='강가마을 술집에서 늦은 밤 손님 이야기가 돌았다는 말이 퍼졌다.',
         ),
     )
     town_1_events = (
         replace(
             event_lookup['late_night_cleanup'],
             probability=0.8,
-            outcome_text='town_1의 여관주인이 시장 손님이 빠진 뒤 술집을 정리했다.',
-            rumor_text='town_1 시장 손님들이 밤늦게 술집에 들렀다는 말이 돌았다.',
+            outcome_text='시장마을 여관주인이 시장 손님이 빠진 뒤 술집을 정리했다.',
+            rumor_text='시장마을 손님들이 밤늦게 술집에 들렀다는 말이 돌았다.',
         ),
     )
 

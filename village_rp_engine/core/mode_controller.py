@@ -146,8 +146,12 @@ def run_mode_talk(engine: TickEngine, state: WorldState, action: PlayerAction) -
         dialogues=[],
         world_log=list(state.world_log),
         player_relationships=dict(state.player_relationships),
+        resident_status=dict(state.resident_status),
+        recognition_score=dict(state.recognition_score),
+        recognition_blocked_until_tick=dict(state.recognition_blocked_until_tick),
         quest_status=dict(state.quest_status),
         quest_contacts={quest_id: set(contacts) for quest_id, contacts in state.quest_contacts.items()},
+        quest_refusal_penalty_ticks=dict(state.quest_refusal_penalty_ticks),
     )
     engine.player_action_system.apply_action(interaction_state, action)
     target_npc_id = engine.dialogue_system.prepare_dialogue_target(interaction_state, action)

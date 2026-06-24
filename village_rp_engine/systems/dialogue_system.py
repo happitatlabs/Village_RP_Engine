@@ -164,7 +164,7 @@ class DialogueSystem:
             return quest_map.get("completed")
         if quest_status == "active":
             return quest_map.get("active")
-        if self.player_progress_system._can_offer_mediation_quest(state):
+        if self.player_progress_system.can_offer_mediation_quest(state):
             return quest_map.get("not_started")
         return None
 

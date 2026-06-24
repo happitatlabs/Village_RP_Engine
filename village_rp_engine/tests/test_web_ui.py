@@ -3,16 +3,32 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import replace
 
+from village_rp_engine.config import MEDIATE_TAVERN_CONFLICT_QUEST_ID
 from village_rp_engine.core.mode_controller import build_engine, build_world_engine, create_default_state, create_default_world_snapshot
 import village_rp_engine.core.world_engine as world_engine_module
-from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements, save_world_state_to_slot
+from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements, rebuild_snapshot_surface, save_world_state_to_slot
 from village_rp_engine.models.mode import Mode
 from village_rp_engine.models.phase1_world import ChronicleArchive, ChronicleEntry, PresentationDialogue
 from village_rp_engine.models.player_notice import PlayerNotice
 from village_rp_engine.models.phase1_world import SettlementLink
 from village_rp_engine.models.player_action import PlayerAction
 from village_rp_engine.main import prompt_player_action
-from web_ui import HTML_PAGE, EngineSession, build_action, serialize_snapshot, serialize_state
+from web_ui import (
+    FACILITY_DEFAULT_RUMORS,
+    HTML_PAGE,
+    EngineSession,
+    build_action,
+    format_player_surface_text,
+    serialize_snapshot,
+    serialize_state,
+)
+
+
+def _seed_mediation_problem(session: EngineSession) -> None:
+    state = session.snapshot_state.settlement_state
+    state.relationships[('blacksmith', 'farmer')] = -1
+    state.relationships[('farmer', 'blacksmith')] = -1
+    session.snapshot_state = rebuild_snapshot_surface(session.snapshot_state)
 
 
 def test_build_action_supports_wait_move_talk() -> None:
@@ -48,6 +64,154 @@ def test_demo_and_web_ui_still_use_rp_surface() -> None:
     assert status == 200
     assert 'visible_scenes' in payload
     assert 'world_log' in payload
+
+
+def test_quest_acceptance_creates_active_player_facing_card() -> None:
+    session = EngineSession()
+    _seed_mediation_problem(session)
+
+    payload = session.snapshot()
+    assert any(card['title'] == '촌장의 부탁' for card in payload['facility_view']['cards'])
+
+    status, payload = session.apply_action({'action_type': 'quest_decision', 'quest': 'mediation', 'decision': 'accept'})
+
+    assert status == 200
+    assert session.snapshot_state.settlement_state.quest_status[MEDIATE_TAVERN_CONFLICT_QUEST_ID] == 'active'
+    assert session.snapshot_state.settlement_state.player_relationships['village_elder'] == 1
+    assert session.snapshot_state.settlement_state.resident_status[session.snapshot_state.active_settlement_id] == 'trusted_guest'
+    assert any(card['title'] == '촌장의 부탁을 받았다' for card in payload['overview_cards'])
+    assert any(card['title'] == '현재 신경 쓸 일' for card in payload['facility_view']['cards'])
+    assert all('mediate_tavern_conflict' not in line for line in payload['quests'])
+
+
+def test_quest_refusal_keeps_inactive_and_uses_player_facing_surface() -> None:
+    session = EngineSession()
+    _seed_mediation_problem(session)
+
+    status, payload = session.apply_action({'action_type': 'quest_decision', 'quest': 'mediation', 'decision': 'refuse'})
+
+    assert status == 200
+    assert session.snapshot_state.settlement_state.quest_status[MEDIATE_TAVERN_CONFLICT_QUEST_ID] == 'refused'
+    assert session.snapshot_state.settlement_state.player_relationships['village_elder'] == 0
+    assert session.snapshot_state.settlement_state.resident_status[session.snapshot_state.active_settlement_id] == 'outsider'
+    assert session.snapshot_state.settlement_state.quest_refusal_penalty_ticks[MEDIATE_TAVERN_CONFLICT_QUEST_ID] == 10
+    assert session.snapshot_state.settlement_state.recognition_blocked_until_tick[session.snapshot_state.active_settlement_id] == (
+        session.snapshot_state.settlement_state.tick + 10
+    )
+    assert any(card['title'] == '부탁을 거절했다' for card in payload['overview_cards'])
+    assert any(card['subtitle'] == '거절 뒤에 남은 거리' for card in payload['facility_view']['cards'])
+
+    player_lines = [
+        line
+        for card in (*payload['overview_cards'], *payload['facility_view']['cards'])
+        for line in card.get('lines', [])
+    ]
+    player_lines.extend(payload['quests'])
+    forbidden = ('mediate_tavern_conflict', 'quest_status', 'relation_delta', '-2', '+1')
+
+    assert all(not any(marker in line for marker in forbidden) for line in player_lines)
+
+
+def test_refusal_penalty_survives_save_load_and_makes_elder_cold(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(world_engine_module, 'SAVE_DIR', tmp_path / 'saves')
+    session = EngineSession()
+    _seed_mediation_problem(session)
+
+    session.apply_action({'action_type': 'quest_decision', 'quest': 'mediation', 'decision': 'refuse'})
+    penalty_before = session.snapshot_state.settlement_state.quest_refusal_penalty_ticks[MEDIATE_TAVERN_CONFLICT_QUEST_ID]
+    resident_status_before = dict(session.snapshot_state.settlement_state.resident_status)
+    session.save(1)
+    status, _ = session.load(1)
+
+    assert status == 200
+    assert session.snapshot_state.settlement_state.quest_refusal_penalty_ticks[MEDIATE_TAVERN_CONFLICT_QUEST_ID] == penalty_before
+    assert session.snapshot_state.settlement_state.resident_status == resident_status_before
+
+    status, payload = session.apply_action({'action_type': 'talk', 'target_npc_id': 'village_elder'})
+
+    assert status == 200
+    assert any('마을 사람으로 받아들이기엔 이르다' in dialogue['text'] for dialogue in payload['dialogues'])
+
+
+def test_recognition_score_event_can_recover_after_refusal() -> None:
+    session = EngineSession()
+    _seed_mediation_problem(session)
+    session.apply_action({'action_type': 'quest_decision', 'quest': 'mediation', 'decision': 'refuse'})
+    session.snapshot_state.settlement_state.quest_refusal_penalty_ticks[MEDIATE_TAVERN_CONFLICT_QUEST_ID] = 0
+
+    status, _ = session.apply_action({'action_type': 'move', 'target_location': '뒷골목'})
+    assert status == 200
+    status, _ = session.apply_action({'action_type': 'gather_hidden_info'})
+    assert status == 200
+    assert session.snapshot_state.settlement_state.resident_status[session.snapshot_state.active_settlement_id] == 'guest'
+
+    status, payload = session.apply_action({'action_type': 'gather_hidden_info'})
+
+    assert status == 200
+    assert session.snapshot_state.settlement_state.resident_status[session.snapshot_state.active_settlement_id] == 'trusted_guest'
+    player_lines = [
+        line
+        for card in (*payload['overview_cards'], *payload['facility_view']['cards'])
+        for line in card.get('lines', [])
+    ]
+    assert any('시선이 조금 누그러졌다' in line for line in player_lines)
+    assert all('recognition_score' not in line and 'resident_status' not in line for line in player_lines)
+
+
+def test_completed_quest_adds_player_trace_to_archive_surface() -> None:
+    session = EngineSession()
+    _seed_mediation_problem(session)
+    progress_system = session.world_engine.get_settlement_engine(
+        session.snapshot_state.active_settlement_id
+    ).dialogue_system.player_progress_system
+    state = session.snapshot_state.settlement_state
+
+    progress_system.accept_mediation_quest(state)
+    state.quest_contacts[MEDIATE_TAVERN_CONFLICT_QUEST_ID] = {'farmer', 'blacksmith'}
+    state.npc_recent_states.clear()
+    progress_system.refresh_after_tick(state)
+    session.snapshot_state = rebuild_snapshot_surface(session.snapshot_state)
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '기록관'})
+
+    assert status == 200
+    assert session.snapshot_state.settlement_state.quest_status[MEDIATE_TAVERN_CONFLICT_QUEST_ID] == 'completed'
+    assert session.snapshot_state.settlement_state.resident_status[session.snapshot_state.active_settlement_id] == 'resident'
+    archive_lines = [line for card in payload['facility_view']['cards'] for line in card.get('lines', [])]
+    assert any('플레이어는 농부와 대장장이 사이를 중재하려 했다.' in line for line in archive_lines)
+    assert all('mediate_tavern_conflict' not in line for line in archive_lines)
+
+
+def test_travel_without_resident_status_is_allowed_but_arrival_is_wary() -> None:
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'travel', 'target_settlement_id': 'village_2', 'travel_mode': 'walk'})
+
+    assert status == 200
+    assert payload['active_settlement_id'] == 'village_2'
+    arrival_lines = payload['overview_cards'][0]['lines']
+    assert any('추천장' in line or '의심스럽게' in line for line in arrival_lines)
+
+
+def test_ethan_guarantee_softens_arrival_without_resident_status() -> None:
+    session = EngineSession()
+    session.apply_action({'action_type': 'talk', 'target_npc_id': 'ethan'})
+
+    status, payload = session.apply_action({'action_type': 'travel', 'target_settlement_id': 'village_2', 'travel_mode': 'walk'})
+
+    assert status == 200
+    assert any('에단이 한 걸음 앞으로' in line for line in payload['overview_cards'][0]['lines'])
+
+
+def test_resident_status_makes_arrival_friendlier() -> None:
+    session = EngineSession()
+    home_state = session.snapshot_state.settlement_states['village_1']
+    home_state.resident_status['village_1'] = 'resident'
+    session.snapshot_state = rebuild_snapshot_surface(session.snapshot_state)
+
+    status, payload = session.apply_action({'action_type': 'travel', 'target_settlement_id': 'village_2', 'travel_mode': 'walk'})
+
+    assert status == 200
+    assert any('회색언덕에서 온 사람' in line for line in payload['overview_cards'][0]['lines'])
 
 
 def test_serialize_snapshot_uses_derived_presentation_state() -> None:
@@ -134,6 +298,15 @@ def test_serialize_snapshot_includes_facility_surface() -> None:
     assert HTML_PAGE.index('id="facilityTitle"') < HTML_PAGE.index('id="facilityButtons"')
 
 
+def test_facility_summary_keeps_primary_view_compact() -> None:
+    payload = serialize_snapshot(create_default_world_snapshot())
+
+    assert len(payload['facility_view']['summary_lines']) <= 3
+    assert all(not line.startswith('정착지:') for line in payload['facility_view']['summary_lines'])
+    assert '#facilitySummary {' in HTML_PAGE
+    assert 'list-style: none;' in HTML_PAGE
+
+
 def test_web_ui_errors_use_centered_guidance_popup() -> None:
     assert 'class="guidance-backdrop"' in HTML_PAGE
     assert 'id="guidancePopup"' in HTML_PAGE
@@ -148,6 +321,9 @@ def test_action_panel_is_hidden_from_player_surface() -> None:
 def test_web_ui_has_landscape_and_portrait_viewport_layout_rules() -> None:
     assert 'height: 100svh;' in HTML_PAGE
     assert 'overflow: hidden;' in HTML_PAGE
+    assert 'max(84px, env(safe-area-inset-bottom))' in HTML_PAGE
+    assert 'padding-bottom: max(96px, env(safe-area-inset-bottom));' in HTML_PAGE
+    assert "document.getElementById('dayTick').textContent = data.display_time || data.time_phase;" in HTML_PAGE
     assert '@media (orientation: landscape) and (max-height: 720px)' in HTML_PAGE
     assert '@media (orientation: portrait)' in HTML_PAGE
     assert '@media (max-width: 480px) and (orientation: portrait)' in HTML_PAGE
@@ -220,7 +396,8 @@ def test_square_facility_formats_notice_lines_without_notice_text_field() -> Non
 
     payload = serialize_snapshot(snapshot, selected_facility_id='square')
 
-    assert any('에단이 새벽에 네 움직임을 눈여겨봤다.' == line for line in payload['facility_view']['summary_lines'])
+    notice_card = next(card for card in payload['facility_view']['cards'] if card['title'] == '공지')
+    assert any('에단이 새벽에 네 움직임을 눈여겨봤다.' == line for line in notice_card['lines'])
 
 
 def test_outside_facility_limits_irrelevant_control_sections() -> None:
@@ -360,7 +537,12 @@ def test_player_surface_localizes_settlement_ids_time_and_ticks() -> None:
     forbidden = ('village_1', 'village_2', 'town_1', 'Day ', ' Tick ', '5 ticks', 'village_1에서 술집에서')
 
     assert payload['active_settlement_name'] == '시장마을'
+    assert payload['display_time'].startswith('오늘 ') or payload['display_time'].startswith(('어제', '이틀 전', '며칠 전'))
     assert all(not any(marker in line for marker in forbidden) for line in player_lines)
+    assert format_player_surface_text(
+        session.snapshot_state,
+        'village_2의 광장에서 농부가 창고 사정을 두고 아침 이야기를 나눴다.',
+    ) == '강가마을 광장에서 농부가 창고 사정을 두고 아침 이야기를 나눴다.'
 
 
 def test_travel_options_use_display_names_but_keep_ids_for_payloads() -> None:
@@ -385,7 +567,7 @@ def test_market_and_clinic_prioritize_facility_flavor() -> None:
     market_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='market')
     market_lines = [line for card in market_payload['facility_view']['cards'] for line in card['lines']]
 
-    assert any('곡물 가격' in line or '거래' in line or '시장세' in line for line in market_lines)
+    assert any(any(keyword in line for keyword in ('곡물', '거래', '시장세', '가격', '계약', '장터', '상인')) for line in market_lines)
     assert all('대장장이와 농부' not in line for line in market_lines)
 
     session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('village_2'))
@@ -457,8 +639,9 @@ def test_archive_and_base_facility_buttons_move_to_locations_first() -> None:
     assert status == 200
     assert base_payload['selected_facility_id'] == 'base'
     assert base_payload['facility_view']['title'] == '거점'
-    assert any('에단' in line for line in base_payload['facility_view']['summary_lines'])
+    assert len(base_payload['facility_view']['summary_lines']) <= 3
     assert any(card['title'] == '에단의 자리' for card in base_payload['facility_view']['cards'])
+    assert any('에단' in line for card in base_payload['facility_view']['cards'] for line in card['lines'])
 
 
 def test_web_ui_rejects_direct_facility_move_without_returning_to_square() -> None:
@@ -497,11 +680,16 @@ def test_back_alley_surface_is_rumor_only_and_accessed_by_location() -> None:
     assert status == 200
     assert payload['facility_view']['cards'][0]['title'] == '살펴본 흔적'
     assert all('security' not in line and 'stress' not in line for line in payload['facility_view']['cards'][0]['lines'])
-    assert any('골목' in line or '창고' in line or '밤' in line for line in payload['facility_view']['cards'][0]['lines'])
+    assert any(any(keyword in line for keyword in ('골목', '창고', '밤', '그림자', '발자국', '창문')) for line in payload['facility_view']['cards'][0]['lines'])
 
     status, payload = session.apply_action({'action_type': 'move', 'target_location': '광장'})
     assert status == 200
     assert payload['selected_facility_id'] == 'square'
+
+
+def test_facility_rumor_pools_have_enough_player_facing_variety() -> None:
+    for facility_id in ('tavern', 'back_alley', 'market', 'clinic'):
+        assert len(FACILITY_DEFAULT_RUMORS[facility_id]) >= 20
 
 
 def test_travel_returns_player_to_square_surface() -> None:
@@ -588,6 +776,9 @@ def test_system_scene_and_log_sections_are_collapsed_by_default() -> None:
     assert 'id="systemDrawer" hidden' in HTML_PAGE
     assert 'function openSystemDrawer()' in HTML_PAGE
     assert '<summary>장면과 대화</summary>' in HTML_PAGE
+    assert '<summary>소문과 기록</summary>' in HTML_PAGE
+    assert '<summary>관계와 퀘스트</summary>' in HTML_PAGE
+    assert HTML_PAGE.index('id="systemDrawer" hidden') < HTML_PAGE.index('<summary>소문과 기록</summary>')
     assert '<details class="surface-detail" open>' not in HTML_PAGE
     assert '<summary>개발자 로그: World Log</summary>' in HTML_PAGE
     assert '<details open>\n            <summary>개발자 로그: World Log</summary>' not in HTML_PAGE
