@@ -7,7 +7,7 @@ from village_rp_engine.core.mode_controller import build_engine, build_world_eng
 import village_rp_engine.core.world_engine as world_engine_module
 from village_rp_engine.core.world_engine import build_world_snapshot, can_travel_between_settlements, save_world_state_to_slot
 from village_rp_engine.models.mode import Mode
-from village_rp_engine.models.phase1_world import PresentationDialogue
+from village_rp_engine.models.phase1_world import ChronicleArchive, ChronicleEntry, PresentationDialogue
 from village_rp_engine.models.player_notice import PlayerNotice
 from village_rp_engine.models.phase1_world import SettlementLink
 from village_rp_engine.models.player_action import PlayerAction
@@ -141,6 +141,7 @@ def test_tutorial_surface_progresses_through_talk_move_and_archive() -> None:
 
     snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.move('술집'))
     assert snapshot.interaction_runtime_state.tutorial_stage == 'visit_archive'
+    snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.move('광장'))
 
     session = EngineSession()
     session.snapshot_state = snapshot
@@ -187,17 +188,254 @@ def test_interaction_choices_follow_facility_context_and_server_validation() -> 
     snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.move('술집'))
 
     tavern_payload = serialize_snapshot(snapshot, selected_facility_id='tavern')
-    assert 'support_guard' not in {choice['choice_id'] for choice in tavern_payload['interaction_choices']}
+    assert tavern_payload['interaction_choices'] == []
+    assert tavern_payload['ui_sections']['choice'] is False
 
     archive_payload = serialize_snapshot(snapshot, selected_facility_id='archive')
     assert archive_payload['interaction_choices'] == []
     assert archive_payload['ui_sections']['choice'] is False
+    assert archive_payload['selected_facility_id'] == 'tavern'
 
     session = EngineSession()
     session.selected_facility_id = 'archive'
     status, payload = session.apply_action({'action_type': 'choose', 'choice_id': 'support_guard'})
     assert status == 400
     assert payload['error'] == '지원하지 않는 선택이다.'
+
+
+def test_tavern_gather_info_returns_focus_card_without_region_influence_lines() -> None:
+    world_engine = build_world_engine()
+    session = EngineSession()
+    session.snapshot_state = world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.move('술집'))
+    session.selected_facility_id = 'tavern'
+
+    status, payload = session.apply_action({'action_type': 'gather_info'})
+
+    assert status == 200
+    assert payload['facility_view']['cards'][0]['title'] == '정보 수집 결과'
+    assert all('north_fields:' not in line for line in payload['facility_view']['cards'][0]['lines'])
+    assert all('security' not in line and 'stress' not in line and 'economy' not in line for line in payload['facility_view']['cards'][0]['lines'])
+    assert all('이벤트 발생:' not in line for line in payload['facility_view']['cards'][0]['lines'])
+
+    status, repeated_payload = session.apply_action({'action_type': 'gather_info'})
+    assert status == 200
+    assert repeated_payload['facility_view']['cards'][0]['lines'] == ['더 건질 만한 새 이야기는 없어 보인다.']
+
+
+def test_archive_prioritizes_story_history_over_numeric_state_dump() -> None:
+    world_engine = build_world_engine()
+    snapshot = create_default_world_snapshot()
+    snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.wait())
+
+    payload = serialize_snapshot(snapshot, selected_facility_id='archive')
+    cards = payload['facility_view']['cards']
+    story_cards = [card for card in cards if card['title'] in {'사건 기록', '소문 기록', '플레이어 행적'}]
+    first_story_lines = [line for card in story_cards[:2] for line in card['lines']]
+
+    assert any(card['title'] == '마을 현황' for card in cards)
+    assert all('security' not in line and 'stress' not in line and 'economy' not in line for line in first_story_lines)
+
+
+def test_player_surface_filters_raw_state_markers_from_default_cards() -> None:
+    snapshot = create_default_world_snapshot()
+    raw_entries = (
+        ChronicleEntry(
+            entry_type='state',
+            source_id='test',
+            day=1,
+            tick=1,
+            text='village_1: security 60, stress 20, economy grain=80, iron=10',
+            settlement_id=snapshot.active_settlement_id,
+            region_id=snapshot.settlement_definition.region_id,
+            category='STATE_CHANGE',
+        ),
+        ChronicleEntry(
+            entry_type='state',
+            source_id='test',
+            day=1,
+            tick=2,
+            text='north_fields: local tension increased',
+            settlement_id=snapshot.active_settlement_id,
+            region_id=snapshot.settlement_definition.region_id,
+            category='STATE_CHANGE',
+        ),
+    )
+    snapshot = replace(
+        snapshot,
+        chronicle_archive=ChronicleArchive(entries=raw_entries),
+        presentation_state=replace(
+            snapshot.presentation_state,
+            visible_scenes=(),
+            dialogues=(),
+            triggered_event_summaries=(),
+            rumor_lines=('STATE_CHANGE village_1: security 60 stress 20 economy grain=80',),
+        ),
+    )
+
+    payload = serialize_snapshot(snapshot, selected_facility_id='archive')
+    player_lines = [
+        line
+        for card in (*payload['overview_cards'], *payload['facility_view']['cards'])
+        for line in card.get('lines', [])
+    ]
+    player_lines.extend(payload['chronicle_highlights'])
+    player_lines.extend(payload['rumor_lines'])
+    forbidden = ('security', 'stress', 'economy', 'grain=', 'iron=', 'STATE_CHANGE', 'village_1', 'north_fields')
+
+    assert all(not any(marker in line for marker in forbidden) for line in player_lines)
+
+
+def test_player_surface_localizes_settlement_ids_time_and_ticks() -> None:
+    session = EngineSession()
+    session.apply_action({'action_type': 'dismiss_intro'})
+    session.apply_action({'action_type': 'move', 'target_location': '술집'})
+    session.apply_action({'action_type': 'gather_info'})
+    session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    session.apply_action({'action_type': 'select_facility', 'facility_id': 'outside'})
+    _, payload = session.apply_action({'action_type': 'travel', 'target_settlement_id': 'town_1', 'travel_mode': 'walk'})
+    _, payload = session.apply_action({'action_type': 'move', 'target_location': '시장'})
+
+    player_lines = [
+        line
+        for card in (*payload['overview_cards'], *payload['facility_view']['cards'])
+        for line in card.get('lines', [])
+    ]
+    player_lines.extend(payload['facility_view']['summary_lines'])
+    player_lines.extend(payload['chronicle_highlights'])
+    player_lines.extend(payload['rumor_lines'])
+    forbidden = ('village_1', 'village_2', 'town_1', 'Day ', ' Tick ', '5 ticks', 'village_1에서 술집에서')
+
+    assert payload['active_settlement_name'] == '시장마을'
+    assert all(not any(marker in line for marker in forbidden) for line in player_lines)
+
+
+def test_travel_options_use_display_names_but_keep_ids_for_payloads() -> None:
+    payload = serialize_snapshot(create_default_world_snapshot(), selected_facility_id='outside')
+
+    assert payload['available_settlements'] == ['village_2', 'town_1']
+    assert payload['available_settlement_options'] == [
+        {'settlement_id': 'village_2', 'label': '강가마을'},
+        {'settlement_id': 'town_1', 'label': '시장마을'},
+    ]
+    outside_titles = [card['title'] for card in payload['facility_view']['cards']]
+    outside_lines = [line for card in payload['facility_view']['cards'] for line in card['lines']]
+    assert 'village_2' not in outside_titles
+    assert 'town_1' not in outside_titles
+    assert '다섯 차례 시간이 흐른다.' in outside_lines
+
+
+def test_market_and_clinic_prioritize_facility_flavor() -> None:
+    session = EngineSession()
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('town_1'))
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.move('시장'))
+    market_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='market')
+    market_lines = [line for card in market_payload['facility_view']['cards'] for line in card['lines']]
+
+    assert any('곡물 가격' in line or '거래' in line or '시장세' in line for line in market_lines)
+    assert all('대장장이와 농부' not in line for line in market_lines)
+
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('village_2'))
+    clinic_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='clinic')
+    clinic_lines = [line for card in clinic_payload['facility_view']['cards'] for line in card['lines']]
+
+    assert any('여행자' in line or '약초' in line or '치료소' in line for line in clinic_lines)
+    assert any(action['label'] == '환자 살펴보기' for action in clinic_payload['facility_view']['actions'])
+
+
+def test_square_wait_action_is_not_duplicated() -> None:
+    session = EngineSession()
+    session.apply_action({'action_type': 'dismiss_intro'})
+    session.apply_action({'action_type': 'talk', 'target_npc_id': 'ethan'})
+    session.apply_action({'action_type': 'move', 'target_location': '술집'})
+    session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    payload = session.snapshot()
+    wait_labels = [action['label'] for action in payload['facility_view']['actions'] if '기다리기' in action['label']]
+
+    assert len(wait_labels) == 1
+
+
+def test_facility_hints_explain_square_only_access_from_tavern() -> None:
+    world_engine = build_world_engine()
+    snapshot = create_default_world_snapshot()
+    snapshot = world_engine.run_step(snapshot, Mode.RP, action=PlayerAction.move('술집'))
+
+    payload = serialize_snapshot(snapshot, selected_facility_id='tavern')
+
+    assert any('기록관은 광장에서 들어갈 수 있다.' == hint for hint in payload['facility_hints'])
+
+
+def test_inaccessible_location_facility_button_moves_first() -> None:
+    session = EngineSession()
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('town_1'))
+
+    payload = serialize_snapshot(session.snapshot_state, selected_facility_id='square')
+    market_button = next(facility for facility in payload['facilities'] if facility['facility_id'] == 'market')
+
+    assert market_button['display_label'] == '시장으로 이동'
+    assert market_button['disabled'] is False
+    assert market_button['action_payload'] == {'action_type': 'move', 'target_location': '시장'}
+
+
+def test_tavern_blocks_direct_entry_to_square_only_facilities() -> None:
+    world_engine = build_world_engine()
+    session = EngineSession()
+    session.snapshot_state = world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.move('술집'))
+    session.selected_facility_id = 'tavern'
+
+    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+
+    assert status == 400
+    assert payload['error'] == '지금 위치에서는 그 시설로 바로 들어갈 수 없다. 먼저 광장으로 나와야 한다.'
+
+
+def test_back_alley_surface_is_rumor_only_and_accessed_by_location() -> None:
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '뒷골목'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'back_alley'
+    assert payload['facility_view']['title'] == '뒷골목'
+
+    status, payload = session.apply_action({'action_type': 'gather_hidden_info'})
+    assert status == 200
+    assert payload['facility_view']['cards'][0]['title'] == '살펴본 흔적'
+    assert all('security' not in line and 'stress' not in line for line in payload['facility_view']['cards'][0]['lines'])
+    assert any('골목' in line or '창고' in line or '밤' in line for line in payload['facility_view']['cards'][0]['lines'])
+
+    status, payload = session.apply_action({'action_type': 'move', 'target_location': '광장'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'square'
+
+
+def test_travel_returns_player_to_square_surface() -> None:
+    session = EngineSession()
+
+    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'outside'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'outside'
+
+    status, payload = session.apply_action({'action_type': 'travel', 'target_settlement_id': 'village_2', 'travel_mode': 'walk'})
+    assert status == 200
+    assert payload['selected_facility_id'] == 'square'
+    assert payload['facility_view']['title'] == '광장'
+    assert payload['overview_cards'][0]['subtitle'] == '이동 완료'
+
+    payload = session.snapshot()
+    assert all(card['subtitle'] != '이동 완료' for card in payload['overview_cards'])
+
+
+def test_square_intro_story_card_expires_and_moves_to_archive_background() -> None:
+    session = EngineSession()
+    session.apply_action({'action_type': 'dismiss_intro'})
+    for _ in range(4):
+        session.apply_action({'action_type': 'wait'})
+
+    payload = session.snapshot()
+    assert all(card['title'] != '회색언덕의 시작' for card in payload['facility_view']['cards'])
+
+    status, payload = session.apply_action({'action_type': 'select_facility', 'facility_id': 'archive'})
+    assert status == 200
+    assert any(card['title'] == '배경 설명' for card in payload['facility_view']['cards'])
 
 
 def test_narration_is_prioritized_in_overview_and_square_cards() -> None:
@@ -239,6 +477,7 @@ def test_web_ui_facility_surface_differs_by_settlement_flavor() -> None:
     assert '여행자와 피난민' in village_2_payload['settlement_flavor_title']
 
     session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.travel('town_1'))
+    session.snapshot_state = session.world_engine.run_step(session.snapshot_state, Mode.RP, action=PlayerAction.move('시장'))
     town_payload = serialize_snapshot(session.snapshot_state, selected_facility_id='market')
     assert any(facility['facility_id'] == 'market' for facility in town_payload['facilities'])
     assert town_payload['facility_view']['title'] == '시장'

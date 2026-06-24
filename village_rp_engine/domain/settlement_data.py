@@ -31,6 +31,7 @@ def build_facilities(
     *,
     has_tavern: bool,
     has_square: bool = True,
+    has_back_alley: bool = True,
     has_clinic: bool = False,
     has_market: bool = False,
 ) -> tuple[FacilityDefinition, ...]:
@@ -51,6 +52,15 @@ def build_facilities(
                 label='술집',
                 facility_type='rumor',
                 target_location='술집',
+            )
+        )
+    if has_back_alley:
+        facilities.append(
+            FacilityDefinition(
+                facility_id='back_alley',
+                label='뒷골목',
+                facility_type='hidden_rumor',
+                target_location='뒷골목',
             )
         )
     if has_clinic:
@@ -151,7 +161,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             settlement_id='village_2',
             region_id='north_fields',
             npc_ids=('farmer', 'innkeeper', 'village_elder', 'guard_captain'),
-            locations=('광장', '술집', '창고', '집'),
+            locations=('광장', '술집', '뒷골목', '창고', '집'),
             schedules=village_2_schedules,
             event_definitions=village_2_events,
             economy_profile=EconomyProfile(values={'grain': 110, 'iron': 4}),
@@ -172,7 +182,7 @@ def build_phase2_settlements() -> dict[str, SettlementDefinition]:
             settlement_id='town_1',
             region_id='river_trade',
             npc_ids=('blacksmith', 'innkeeper', 'village_elder', 'guard_captain'),
-            locations=('광장', '대장간', '술집', '시장', '집'),
+            locations=('광장', '대장간', '술집', '뒷골목', '시장', '집'),
             schedules=town_1_schedules,
             event_definitions=town_1_events,
             economy_profile=EconomyProfile(values={'grain': 60, 'iron': 55, 'trade': 40}),

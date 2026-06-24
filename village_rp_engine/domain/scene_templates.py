@@ -130,6 +130,16 @@ ARRIVAL_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
             "플레이어가 있는 대장간에 {actor1}가 새로 들어왔다.",
         ],
     },
+    "뒷골목": {
+        "rp": [
+            "좁은 길 끝에서 {actor1_subject} 조심스럽게 모습을 드러냈다.",
+            "잠시 뒤 {actor1_subject} 뒷골목 안쪽으로 발걸음을 옮겼다.",
+        ],
+        "observer": [
+            "뒷골목으로 {actor1}가 들어왔다.",
+            "플레이어가 있는 뒷골목에 {actor1}가 모습을 드러냈다.",
+        ],
+    },
 }
 
 GUARD_CAPTAIN_NOTICE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
@@ -160,7 +170,7 @@ GUARD_CAPTAIN_NOTICE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
 }
 
 
-ARRIVAL_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
+GUARD_CAPTAIN_ARRIVAL_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
     "술집": {
         "rp": [
             "경비대장이 입구에서 안쪽을 훑어본 뒤 술집 안으로 들어왔다.",
@@ -199,6 +209,16 @@ ARRIVAL_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
         "observer": [
             "시장에서는 {actor1_subject} 오가는 사람들 틈에서 주변을 살피고 있었다.",
             "시장 한쪽에서 {actor1_subject} 사람들 움직임을 느긋하게 바라보고 있었다.",
+        ],
+    },
+    "뒷골목": {
+        "rp": [
+            "뒷골목 어귀에서 경비대장이 잠시 발걸음을 멈추고 주변을 살폈다.",
+            "경비대장이 좁은 길 안쪽을 훑으며 천천히 들어왔다.",
+        ],
+        "observer": [
+            "경비대장이 뒷골목으로 들어와 주변을 살폈다.",
+            "뒷골목에 들어선 경비대장이 어두운 구석을 확인했다.",
         ],
     },
 }
@@ -244,6 +264,16 @@ IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
             "시장 한쪽에서 {actor1_subject} 좌판 사이를 느긋하게 둘러보고 있었다.",
         ],
     },
+    "뒷골목": {
+        "rp": [
+            "뒷골목 안쪽에서 {actor1_subject} 주변 눈치를 살피고 있었다.",
+            "좁은 길목에 {actor1_subject} 조용히 서서 지나가는 말을 듣고 있었다.",
+        ],
+        "observer": [
+            "뒷골목에서 {actor1}가 주변을 조용히 살피고 있었다.",
+            "{actor1}가 뒷골목 한쪽에서 말을 아끼고 있었다.",
+        ],
+    },
 }
 
 GUARD_CAPTAIN_IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
@@ -287,6 +317,16 @@ GUARD_CAPTAIN_IDLE_SCENE_TEMPLATES: dict[str, dict[str, list[str]]] = {
             "시장 안으로 들어온 경비대장이 좌판 주변을 점검하듯 둘러보았다.",
         ],
     },
+    "뒷골목": {
+        "rp": [
+            "뒷골목 한쪽에서 경비대장이 어두운 구석을 경계하듯 살피고 있었다.",
+            "경비대장은 좁은 길목을 지나며 주변 기척을 놓치지 않으려 했다.",
+        ],
+        "observer": [
+            "뒷골목에서 경비대장이 주변을 경계하듯 살피고 있었다.",
+            "경비대장이 뒷골목 안쪽을 조심스럽게 확인하고 있었다.",
+        ],
+    },
 }
 
 
@@ -307,16 +347,18 @@ def render_event_scene(
 def render_arrival_scene(location: str, npc_id: str, tick: int, npc_names: dict[str, str]) -> tuple[str, str]:
     context = build_context((npc_id,), npc_names)
     template_source = GUARD_CAPTAIN_ARRIVAL_SCENE_TEMPLATES if npc_id == "guard_captain" else ARRIVAL_SCENE_TEMPLATES
-    rp_text = select_template(template_source[location]["rp"], tick).format_map(context)
-    observer_text = select_template(template_source[location]["observer"], tick).format_map(context)
+    location_templates = template_source.get(location, ARRIVAL_SCENE_TEMPLATES.get(location, ARRIVAL_SCENE_TEMPLATES["광장"]))
+    rp_text = select_template(location_templates["rp"], tick).format_map(context)
+    observer_text = select_template(location_templates["observer"], tick).format_map(context)
     return rp_text, observer_text
 
 
 def render_idle_scene(location: str, npc_id: str, tick: int, npc_names: dict[str, str]) -> tuple[str, str]:
     context = build_context((npc_id,), npc_names)
     template_source = GUARD_CAPTAIN_IDLE_SCENE_TEMPLATES if npc_id == "guard_captain" else IDLE_SCENE_TEMPLATES
-    rp_text = select_template(template_source[location]["rp"], tick).format_map(context)
-    observer_text = select_template(template_source[location]["observer"], tick).format_map(context)
+    location_templates = template_source.get(location, IDLE_SCENE_TEMPLATES.get(location, IDLE_SCENE_TEMPLATES["광장"]))
+    rp_text = select_template(location_templates["rp"], tick).format_map(context)
+    observer_text = select_template(location_templates["observer"], tick).format_map(context)
     return rp_text, observer_text
 
 
