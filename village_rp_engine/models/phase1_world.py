@@ -276,6 +276,9 @@ class InteractionRuntimeState:
     choice_counts: dict[str, int] = field(default_factory=dict)
     last_choice_id: str | None = None
     last_choice_tick: int = 0
+    intro_dismissed: bool = False
+    tutorial_stage: str = 'talk_ethan'
+    tutorial_completed: bool = False
 
 
 @dataclass(frozen=True)

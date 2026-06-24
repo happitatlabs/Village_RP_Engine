@@ -102,6 +102,14 @@ PLAYER_INTERACTION_CHOICES: dict[str, dict[str, object]] = {
     },
 }
 
+TUTORIAL_STAGE_SEQUENCE = ('talk_ethan', 'visit_tavern', 'visit_archive', 'wait_in_square', 'complete')
+TUTORIAL_EVENT_TEXT = {
+    'visit_tavern': '이벤트 발생: 에단이 술집에서 먼저 사람들 말을 들어보자고 했다.',
+    'visit_archive': '이벤트 발생: 술집의 웅성거림 사이로 오늘 남길 실마리가 떠올랐다.',
+    'wait_in_square': '이벤트 발생: 기록관 서가에서 오늘의 이야기를 정리해 보라는 기척이 남았다.',
+    'complete': '이벤트 발생: 회색언덕에서 첫 하루를 스스로 이어갈 준비가 되었다.',
+}
+
 
 def _resolve_save_dir() -> Path:
     override = os.environ.get('VRE_SAVE_DIR')
@@ -220,7 +228,132 @@ def _update_interaction_runtime_state(
         choice_counts=choice_counts,
         last_choice_id=choice_id,
         last_choice_tick=tick,
+        intro_dismissed=interaction_runtime_state.intro_dismissed,
+        tutorial_stage=interaction_runtime_state.tutorial_stage,
+        tutorial_completed=interaction_runtime_state.tutorial_completed,
     )
+
+
+def dismiss_intro(interaction_runtime_state: InteractionRuntimeState) -> InteractionRuntimeState:
+    if interaction_runtime_state.intro_dismissed:
+        return interaction_runtime_state
+    return replace(interaction_runtime_state, intro_dismissed=True)
+
+
+def _advance_tutorial_runtime_state(
+    interaction_runtime_state: InteractionRuntimeState,
+    active_state: WorldState,
+    *,
+    action: PlayerAction | None = None,
+    selected_facility_id: str | None = None,
+) -> tuple[InteractionRuntimeState, str | None]:
+    if interaction_runtime_state.tutorial_completed:
+        return interaction_runtime_state, None
+
+    current_stage = interaction_runtime_state.tutorial_stage or TUTORIAL_STAGE_SEQUENCE[0]
+    next_stage = current_stage
+
+    if current_stage == 'talk_ethan':
+        if action is not None and action.action_type == 'talk' and action.target_npc_id == 'ethan':
+            next_stage = 'visit_tavern'
+    elif current_stage == 'visit_tavern':
+        if (
+            action is not None
+            and action.action_type == 'move'
+            and active_state.player_location == '술집'
+        ):
+            next_stage = 'visit_archive'
+        elif selected_facility_id == 'tavern' and active_state.player_location == '술집':
+            next_stage = 'visit_archive'
+    elif current_stage == 'visit_archive':
+        if selected_facility_id == 'archive':
+            next_stage = 'wait_in_square'
+    elif current_stage == 'wait_in_square':
+        if (
+            action is not None
+            and action.action_type == 'wait'
+            and active_state.player_location == '광장'
+        ):
+            next_stage = 'complete'
+
+    if next_stage == current_stage:
+        return interaction_runtime_state, None
+
+    return (
+        replace(
+            interaction_runtime_state,
+            intro_dismissed=True,
+            tutorial_stage=next_stage,
+            tutorial_completed=next_stage == 'complete',
+        ),
+        TUTORIAL_EVENT_TEXT.get(next_stage),
+    )
+
+
+def rebuild_snapshot_surface(
+    snapshot: WorldSnapshot,
+    *,
+    interaction_runtime_state: InteractionRuntimeState | None = None,
+    special_npc_states: dict[str, SpecialNPCState] | None = None,
+) -> WorldSnapshot:
+    current_entries = collect_world_chronicle_entries(
+        snapshot.settlement_states,
+        active_settlement_id=snapshot.active_settlement_id,
+        settlement_definitions=snapshot.settlement_definitions,
+        region_states=snapshot.region_states,
+        region_definitions=snapshot.region_definitions,
+        continent_states=snapshot.continent_states,
+        continent_definitions=snapshot.continent_definitions,
+    )
+    archive = append_chronicle_entries(snapshot.chronicle_archive, current_entries)
+    chronicle_entries = build_world_chronicle_entries(
+        snapshot.settlement_states,
+        active_settlement_id=snapshot.active_settlement_id,
+        settlement_definitions=snapshot.settlement_definitions,
+        region_states=snapshot.region_states,
+        region_definitions=snapshot.region_definitions,
+        continent_states=snapshot.continent_states,
+        continent_definitions=snapshot.continent_definitions,
+        chronicle_archive=archive,
+    )
+    active_state = snapshot.settlement_states[snapshot.active_settlement_id]
+    return WorldSnapshot(
+        settlement_definitions=dict(snapshot.settlement_definitions),
+        settlement_states=snapshot.settlement_states,
+        active_settlement_id=snapshot.active_settlement_id,
+        recently_visited_ids=tuple(snapshot.recently_visited_ids),
+        presentation_state=build_presentation_state(active_state, chronicle_entries=chronicle_entries),
+        simulation_depth=snapshot.simulation_depth,
+        pending_influences=tuple(snapshot.pending_influences),
+        settlement_links=tuple(snapshot.settlement_links),
+        propagated_rumor_keys=tuple(snapshot.propagated_rumor_keys),
+        region_definitions=dict(snapshot.region_definitions),
+        region_states=dict(snapshot.region_states),
+        continent_definitions=dict(snapshot.continent_definitions),
+        continent_states=dict(snapshot.continent_states),
+        chronicle_archive=archive,
+        interaction_runtime_state=interaction_runtime_state or snapshot.interaction_runtime_state,
+        special_npc_states=dict(special_npc_states or snapshot.special_npc_states),
+    )
+
+
+def apply_tutorial_update(
+    snapshot: WorldSnapshot,
+    *,
+    action: PlayerAction | None = None,
+    selected_facility_id: str | None = None,
+) -> WorldSnapshot:
+    interaction_runtime_state, tutorial_event_text = _advance_tutorial_runtime_state(
+        snapshot.interaction_runtime_state,
+        snapshot.settlement_state,
+        action=action,
+        selected_facility_id=selected_facility_id,
+    )
+    if interaction_runtime_state == snapshot.interaction_runtime_state and tutorial_event_text is None:
+        return snapshot
+    if tutorial_event_text is not None:
+        snapshot.settlement_state.world_log.append(tutorial_event_text)
+    return rebuild_snapshot_surface(snapshot, interaction_runtime_state=interaction_runtime_state)
 
 
 def apply_pending_influences(
@@ -827,7 +960,7 @@ class Phase1WorldEngine:
                 action.choice_id,
                 active_state.tick,
             )
-            return WorldSnapshot(
+            next_snapshot = WorldSnapshot(
                 settlement_definitions=dict(self.settlement_definitions),
                 settlement_states=states,
                 active_settlement_id=snapshot.active_settlement_id,
@@ -845,6 +978,7 @@ class Phase1WorldEngine:
                 interaction_runtime_state=interaction_runtime_state,
                 special_npc_states=dict(snapshot.special_npc_states or build_default_special_npc_states()),
             )
+            return next_snapshot
 
         if action.action_type == 'talk':
             active_state = states[snapshot.active_settlement_id]
@@ -870,7 +1004,7 @@ class Phase1WorldEngine:
                 continent_definitions=continent_definitions,
                 chronicle_archive=archive,
             )
-            return WorldSnapshot(
+            next_snapshot = WorldSnapshot(
                 settlement_definitions=dict(self.settlement_definitions),
                 settlement_states=states,
                 active_settlement_id=snapshot.active_settlement_id,
@@ -888,6 +1022,7 @@ class Phase1WorldEngine:
                 interaction_runtime_state=snapshot.interaction_runtime_state,
                 special_npc_states=dict(snapshot.special_npc_states or build_default_special_npc_states()),
             )
+            return apply_tutorial_update(next_snapshot, action=action)
 
         region_snapshot = build_world_snapshot(
             settlement_definitions=resolved_settlement_definitions,
@@ -959,7 +1094,7 @@ class Phase1WorldEngine:
             continent_definitions=continent_definitions,
             chronicle_archive=archive,
         )
-        return WorldSnapshot(
+        next_snapshot = WorldSnapshot(
             settlement_definitions=dict(self.settlement_definitions),
             settlement_states=states,
             active_settlement_id=next_active_settlement_id,
@@ -977,6 +1112,7 @@ class Phase1WorldEngine:
             interaction_runtime_state=snapshot.interaction_runtime_state,
             special_npc_states=special_npc_states,
         )
+        return apply_tutorial_update(next_snapshot, action=action)
 
     def _run_active_step(self, settlement_engine: TickEngine, settlement_state: WorldState, mode: Mode, action: PlayerAction | None) -> WorldState:
         from village_rp_engine.core.mode_controller import run_mode_tick
